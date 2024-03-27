@@ -1,4 +1,6 @@
-from pymatgen.core import Composition
+from pymatgen.core import Element
+from utils import MetalElements, FunctionalGroupElements
+import numpy as np
 
 metal_mapper = {
     
@@ -12,7 +14,9 @@ def composit_feature(composit_dict):
         ...
     }
     '''
+    feat_vec = np.zeros(104, dtype=np.float32)
     for ele, frac in composit_dict.items():
-        
+        feat_vec[Element(ele).number] = frac
+    return feat_vec
 
 def 

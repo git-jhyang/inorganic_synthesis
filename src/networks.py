@@ -71,3 +71,51 @@ class DNNBlock(BaseNetwork):
             h = hidden_layer(h)
         out = self.output_layer(h)
         return out
+
+class AutoEncoder(BaseNetwork):
+    def __init__(self,
+                 input_dim:int, 
+                 latent_dim:int, 
+                 encoder_hidden_dim:int = 32,
+                 encoder_hidden_layers:int = 2,
+                 decoder_hidden_dim:int = 32,
+                 decoder_hidden_layers:int = 2,
+                 batch_norm:bool = True, 
+                 dropout:float = 0,
+                 activation:str = 'LeakyReLU',
+                 **kwargs): 
+        super(AutoEncoder, self).__init__()
+        self._model_param = {
+            'input_dim':input_dim,
+            'latent_dim':latent_dim,
+            'encoder_hidden_dim':encoder_hidden_dim,
+            'encoder_hidden_layers':encoder_hidden_layers,
+            'decoder_hidden_dim':decoder_hidden_dim,
+            'decoder_hidden_layers':decoder_hidden_layers,
+            'batch_norm':batch_norm,
+            'dropout':dropout,
+            'activation':activation,
+        }
+        self.comp_encoder = DNNBlock(input_dim, latent_dim, encoder_hidden_dim, 
+                                     encoder_hidden_layers, batch_norm, dropout, activation)
+        self.comp_decoder = DNNBlock(latent_dim, input_dim, decoder_hidden_dim, 
+                                     decoder_hidden_layers, batch_norm, dropout, activation)
+
+    def forward(self, x):
+        l = self.comp_encoder(x)
+        y = torch.nn.Sigmoid()(self.comp_decoder(l))
+        return l, y
+
+    def save(self, path, prefix, overwrite=True):
+        self._save(path, f'{prefix}_full.model', overwrite)
+        self.comp_encoder._save(path, f'{prefix}_encoder.model', overwrite)
+        self.comp_decoder._save(path, f'{prefix}_decoder.model', overwrite)
+
+    def load_encoder(self, path, prefix, requires_grad=True):
+        pass
+
+    def load_decoder(self, path, prefix, requires_grad=True):
+        pass
+
+    def load(self, path, prefix, requires_grad=True):
+        pass

@@ -1,48 +1,11 @@
 import torch, gzip, pickle
 import numpy as np
-from pymatgen.core import Element
-from .utils import SortedAllElements, MetalElements, NEAR_ZERO
+from .utils import MetalElements
+from .feature import composition_to_feature
 from typing import Dict
 
-def composition_to_feature(composit_dict, dtype=np.float32):
-    '''
-    composit_dict = {
-        element_0 (str): fraction_0 (float),
-        element_1 (str): fraction_1 (float),
-        ...
-    }
-    1-dim vector of length 104
-    maximum atomic number: 103 (Lr, Lawrencium)
-    elements from Rf (104) to Og (118) are not included
-    '''
-    feat_vec = np.zeros(104, dtype=dtype)
-    have_metal = False
-    for ele, frac in composit_dict.items():
-        if ele in MetalElements: have_metal = True
-        feat_vec[Element(ele).number] = frac
-    feat_vec /= feat_vec.sum()
-    if not have_metal:
-        feat_vec *= 0.5
-        feat_vec[0] = 1 - feat_vec.sum()
-    return feat_vec
-
-def feature_to_composition(feature_vector, tol=NEAR_ZERO):
-    '''
-    1-dim vector of length 104
-    maximum atomic number: 103 (Lr, Actinoids)
-    elements from Rf (104) to Og (118) are not included
-    '''
-    if isinstance(feature_vector, torch.Tensor):
-        feature_vector = feature_vector.cpu().numpy()
-    feature_vector[feature_vector <= tol] = 0
-    if feature_vector[0] != 0:
-        feature_vector[0] = 0
-        feature_vector *= 2
-    idxs = np.where(feature_vector)[0]
-    return {SortedAllElements[i]: feature_vector[i] for i in idxs} 
-
 class BaseData:
-    def __init__(self, data:Dict, info_attrs=['id','year','count_weight']):
+    def __init__(self, data:Dict, info_attrs=['id','year','feature_type']):
         self._info_attrs = []
         self._feature_attrs = []
         self.device = None
@@ -78,40 +41,39 @@ class BaseData:
 
     def to_dict(self):
         output_dict = {attr:getattr(self, attr) for attr in self._info_attrs}
-        for attr in self._feature_attrs:
-            if 'comp' in attr:
-                output_dict.update({attr:feature_to_composition(getattr(self, attr))})
-            else:
-                output_dict.update({attr:getattr(self, attr)})
         return output_dict
 
     def __dict__(self):
         return self.to_dict()
 
 class CompositionData(BaseData):
-    def __init__(self, data:Dict, composition:Dict, **kwargs):
+    def __init__(self, data:Dict, composition:Dict, feature_type='basic', **kwargs):
         super(CompositionData, self).__init__(data, **kwargs)
-        self.comp_feat = composition_to_feature(composition)
+        self.feature_type = feature_type
+        self.composition = composition
+        self.comp_feat = composition_to_feature(composition, feature_type=feature_type, **kwargs)
+        self._info_attrs.append('composition')
         self._feature_attrs.append('comp_feat')
         self.to_torch()
 
-class ConditionalData(BaseData):
-    def __init__(self, data:Dict, composition:Dict=None, element:str = None, **kwargs):
-        super(ConditionalData, self).__init__(data, **kwargs)
-        self.target_comp_feat = composition_to_feature(data['target'])
+class ConditionalData1(BaseData):
+    def __init__(self, data:Dict, feature_type:str='basic',
+                  prec_composition:Dict=None, core_element:str = None, **kwargs):
+        super(ConditionalData1, self).__init__(data, **kwargs)
+        self.target_comp_feat = composition_to_feature(data['target'], feature_type=feature_type, **kwargs)
         
-        if element is None:
+        if core_element is None:
             self.element_feat = composition_to_feature({})
-        elif isinstance(element, str):
-            self.element_feat = composition_to_feature({element:1})
+        elif isinstance(core_element, str):
+            self.element_feat = composition_to_feature({core_element:1})
 
-        if composition is not None:
-            self.precursor_comp_feat = composition_to_feature(composition)
-            elements = [ele for ele in composition.keys() if ele in MetalElements]
+        if prec_composition is not None:
+            self.precursor_comp_feat = composition_to_feature(prec_composition, feature_type=feature_type, **kwargs)
+            elements = [ele for ele in prec_composition.keys() if ele in MetalElements]
             if len(elements) != 0:
                 self.element_feat = composition_to_feature({elements[0]:1})
                 if len(elements) != 1:
-                    print('There is multiple metal elements in precursor. ID:', data['id'], composition)
+                    print('There is multiple metal elements in precursor. ID:', data['id'], prec_composition)
             self._feature_attrs.append(['precursor_comp_feat'])
 
         self._feature_attrs.extend(['target_comp_feat','element_feat'])
@@ -141,6 +103,27 @@ class BaseDataset(torch.utils.data.Dataset):
     def __getitem__(self, i):
         return self._data[i]
     
+class CompositionDataset(BaseDataset):
+    def __init__(self):
+        super(CompositionDataset, self).__init__()
+
+    def from_file(self, data_path='../data/unique_data.pkl.gz'):
+        super(CompositionDataset, self).__init__()
+        with gzip.open(data_path, 'rb') as f:
+            dataset = pickle.load(f)
+        
+        for data in dataset:
+            comp_data = CompositionData(data, data['target_comp'])
+            self._data.append(comp_data)
+            self._element.append(comp_data.comp_feat != 0)
+        self._data = np.array(self._data)
+        self._year = np.array([d.year for d in self._data])
+        self._element = np.vstack(self._element)
+
+    def __getitem__(self, i):
+        data = super().__getitem__(i)
+        info = 
+        return data.comp_feat, 
 
 #    def cfn(self, dataset):
 #        feat = []

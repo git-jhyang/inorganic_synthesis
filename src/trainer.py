@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 class DefaultTrainer:
     def __init__(self, model, lr, crit, device='cpu'):

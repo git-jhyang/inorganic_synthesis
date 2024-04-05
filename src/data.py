@@ -122,7 +122,7 @@ class CompositionDataset(BaseDataset):
 
     def __getitem__(self, i):
         data = super().__getitem__(i)
-        info = 
+        info = ''
         return data.comp_feat, 
 
 #    def cfn(self, dataset):

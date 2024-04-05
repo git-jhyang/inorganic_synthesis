@@ -8,7 +8,7 @@ class BaseNetwork(tnn.Module):
         super(BaseNetwork, self).__init__()
         self._model_param = {}
     
-    def save_model(self, path, file_name='output.model', overwrite=True):
+    def _save(self, path, file_name='output.model', overwrite=True):
         model_path = os.path.join(path, file_name)
         if not overwrite and os.path.isfile(model_path):
             raise FileExistsError(model_path)
@@ -29,7 +29,7 @@ class BaseNetwork(tnn.Module):
         cls.load_state_dict(model_state_dict)
         cls.requires_grad_(requires_grad=requires_grad)
         return cls
-        
+    
 class DNNBlock(BaseNetwork):
     def __init__(self, 
                  input_dim:int, 
@@ -71,4 +71,3 @@ class DNNBlock(BaseNetwork):
             h = hidden_layer(h)
         out = self.output_layer(h)
         return out
-        

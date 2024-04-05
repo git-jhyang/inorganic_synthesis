@@ -1,6 +1,8 @@
+from pymatgen.core import Element
+import numpy as np
+import torch
 
-
-NEAR_ZERO = 1e-6
+NEAR_ZERO = 1e-5
 
 NonMetals = 'H C N O F P S Cl Se Br I'.split()
 AlkaliMetals = 'Li Na K Rb Cs Fr'.split()
@@ -15,4 +17,32 @@ Unknown = 'Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og'.split()
 
 MetalElements = AlkaliMetals + AlkaliEarthMetals + TransitionMetals + PostTransitionMetals + Metalloids + Lanthanoids + Actinoids
 FunctionalGroupElements = NonMetals
+AllElements = MetalElements + NonMetals + Halogens + Unknown
 
+SortedAllElements = ['None'] + sorted(AllElements, key=lambda x: Element(x).number)
+
+def to_numpy(vector):
+    if isinstance(vector, torch.Tensor):
+        return vector.cpu().numpy()
+    else:
+        return np.array(vector)
+
+def squared_error(mat1, mat2, average=True):
+    x = to_numpy(mat1)
+    y = to_numpy(mat2)
+    sq_err = np.sum(np.square(x - y), -1)
+    if average:
+        return sq_err.mean()
+    else:
+        return sq_err
+
+def cosin_similarity(mat1, mat2, average=True):
+    x = to_numpy(mat1)
+    y = to_numpy(mat2)
+    x = x / np.sqrt(np.sum(np.square(x), -1, keepdims=True))
+    y = y / np.sqrt(np.sum(np.square(y), -1, keepdims=True))
+    cos_sim = np.sum(x * y, -1)
+    if average:
+        return cos_sim.mean()
+    else:
+        return cos_sim

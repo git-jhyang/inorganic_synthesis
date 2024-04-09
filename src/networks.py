@@ -119,3 +119,42 @@ class AutoEncoder(BaseNetwork):
 
     def load(self, path, prefix, requires_grad=True):
         pass
+
+class CVAE(BaseNetwork):
+    def __init__(self,
+                 input_dim:int, 
+                 latent_dim:int, 
+                 condition_dim:int,
+                 encoder_hidden_dim:int = 32,
+                 encoder_hidden_layers:int = 2,
+                 decoder_hidden_dim:int = 32,
+                 decoder_hidden_layers:int = 2,
+                 batch_norm:bool = True, 
+                 dropout:float = 0,
+                 activation:str = 'LeakyReLU',
+                 **kwargs): 
+        
+        self._model_param = {
+            'input_dim':input_dim,
+            'latent_dim':latent_dim,
+            'condition_dim':condition_dim,
+            'encoder_hidden_dim':encoder_hidden_dim,
+            'encoder_hidden_layers':encoder_hidden_layers,
+            'decoder_hidden_dim':decoder_hidden_dim,
+            'decoder_hidden_layers':decoder_hidden_layers,
+            'batch_norm':batch_norm,
+            'dropout':dropout,
+            'activation':activation,
+        }
+        self.prec_encoder = DNNBlock(input_dim, latent_dim * 2, encoder_hidden_dim, 
+                                     encoder_hidden_layers, batch_norm, dropout, activation)
+        self.prec_decoder = DNNBlock(latent_dim + condition_dim, input_dim, decoder_hidden_dim, 
+                                     decoder_hidden_layers, batch_norm, dropout, activation)
+
+    def forward(self, x, c):
+        param = self.prec_encoder(x)
+        mu, log_var = torch.chunk(param, 2, -1)
+        z = mu + torch.randn_like(log_var) * torch.exp(0.5 * log_var) # mu + N * STD
+        y = self.prec_decoder(z)
+#        self.
+        return y

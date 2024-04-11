@@ -1,12 +1,12 @@
 import torch
 import numpy as np
 
-class DefaultTrainer:
-    def __init__(self, model, lr, crit, device='cpu'):
+class BaseTrainer:
+    def __init__(self, model, lr, device='cpu'):
         self.model = model
         self.model.to(device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr)
-        self.crit = crit
+        self._output_keys = []
         self.device = device
     
     def train(self, dataloader):
@@ -44,10 +44,16 @@ class DefaultTrainer:
 
     def _init_output(self):
         self.output = {k:None for k in self._output_keys}
+    
+    def _eval_batch(self, batch):
+        pass
 
-class AETrainer(DefaultTrainer):
+    def _parse_output(self, batch, output):
+        pass
+
+class AETrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda'):
-        super(AETrainer, self).__init__(model, lr, None, device)
+        super(AETrainer, self).__init__(model, lr, device)
         self._output_keys = ['target','pred','latent', 'info']
 
     def _eval_batch(self, batch, compute_loss=True):
@@ -72,6 +78,12 @@ class AETrainer(DefaultTrainer):
             else:
                 self.output[label] = np.vstack([self.output[label], value])
 
-class VAETrainer(DefaultTrainer):
-    def __init__(self):
-        pass
+class VAETrainer(BaseTrainer):
+    def __init__(self, model, lr, device='cuda'):
+        super(VAETrainer, self).__init__(model, lr, device)
+        self._output_keys = ['target','pred','info']
+    
+    def _eval_batch(self, batch, compute_loss=True):
+        feat, info = batch
+        if compute_loss:
+            self.model(*feat)

@@ -2,17 +2,15 @@ import torch, gzip, pickle
 import numpy as np
 from .utils import MetalElements
 from .feature import composition_to_feature
-from typing import Dict
+from typing import Dict, List
 
 class BaseData:
-    def __init__(self, data:Dict, info_attrs=['id','year','feature_type']):
-        self._info_attrs = []
+    def __init__(self, data:Dict, info_attrs:List[str] = ['id','raw_id','year','feature_type']):
+        self._info_attrs = info_attrs
         self._feature_attrs = []
         self.device = None
-        for attr in info_attrs:
+        for attr in self._info_attrs:
             setattr(self, attr, data.get(attr))
-            if data.get(attr) is not None:
-                self._info_attrs.append(attr)
 
     def to_numpy(self):
         for attr in self._feature_attrs:
@@ -32,7 +30,7 @@ class BaseData:
         if len(self._feature_attrs) == 0:
             return
         data = getattr(self, self._feature_attrs[0])
-        if isinstance(data, np.ndarray):
+        if self.device is None:
             self.to_torch()
         for attr in self._feature_attrs:
             data = getattr(self, attr)
@@ -57,26 +55,28 @@ class CompositionData(BaseData):
         self.to_torch()
 
 class ConditionalData1(BaseData):
-    def __init__(self, data:Dict, feature_type:str='basic',
-                  prec_composition:Dict=None, core_element:str = None, **kwargs):
+    def __init__(self, data:Dict, 
+                 composition:Dict=None, 
+                 metal_composition:Dict={}, 
+                 target_feature_type:str='basic', 
+                 composition_feature_type:str='basic',
+                 metal_feature_type:str='metal_frac',
+                 **kwargs):
         super(ConditionalData1, self).__init__(data, **kwargs)
-        self.target_comp_feat = composition_to_feature(data['target'], feature_type=feature_type, **kwargs)
         
-        if core_element is None:
-            self.element_feat = composition_to_feature({})
-        elif isinstance(core_element, str):
-            self.element_feat = composition_to_feature({core_element:1})
+        target_feat = composition_to_feature(data['target'], feature_type=target_feature_type, **kwargs)
 
-        if prec_composition is not None:
-            self.precursor_comp_feat = composition_to_feature(prec_composition, feature_type=feature_type, **kwargs)
-            elements = [ele for ele in prec_composition.keys() if ele in MetalElements]
-            if len(elements) != 0:
-                self.element_feat = composition_to_feature({elements[0]:1})
-                if len(elements) != 1:
-                    print('There is multiple metal elements in precursor. ID:', data['id'], prec_composition)
-            self._feature_attrs.append(['precursor_comp_feat'])
+        if composition is not None:
+            self.composition = composition
+            self.comp_feat = composition_to_feature(composition, feature_type=composition_feature_type, **kwargs)
+            metal_composition = {e:f for e,f in composition.items() if e in MetalElements}
+            self._feature_attrs.append('comp_feat')
+        element_feat = composition_to_feature(metal_composition, feature_type=metal_feature_type)
 
-        self._feature_attrs.extend(['target_comp_feat','element_feat'])
+        self.metal_composition = metal_composition
+        self.cond_feat = np.hstack([element_feat, target_feat])
+        self._info_attrs.append('metal_composition')
+        self._feature_attrs.append('cond_feat')
 
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(self):
@@ -120,15 +120,10 @@ class CompositionDataset(BaseDataset):
         self._year = np.array([d.year for d in self._data])
         self._element = np.vstack(self._element)
 
-    def __getitem__(self, i):
-        data = super().__getitem__(i)
-        info = ''
-        return data.comp_feat, 
-
-#    def cfn(self, dataset):
-#        feat = []
-#        info = []
-#        for data in dataset:
-#            feat.append(data.comp_feat)
-#            info.append(data.to_dict())
-#        return torch.vstack(feat), info
+    def cfn(self, dataset):
+        feat = []
+        info = []
+        for data in dataset:
+            feat.append(data.comp_feat)
+            info.append(data.to_dict())
+        return torch.vstack(feat), info

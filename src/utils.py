@@ -15,11 +15,10 @@ Actinoids = 'Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr'.split()
 Halogens = 'He Ne Ar Kr Xe Rn'.split()
 Unknown = 'Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og'.split()
 
-MetalElements = AlkaliMetals + AlkaliEarthMetals + TransitionMetals + PostTransitionMetals + Metalloids + Lanthanoids + Actinoids
-FunctionalGroupElements = NonMetals
-AllElements = MetalElements + NonMetals + Halogens + Unknown
-
-SortedAllElements = ['None'] + sorted(AllElements, key=lambda x: Element(x).number)
+MetalElements = sorted(AlkaliMetals + AlkaliEarthMetals + TransitionMetals + PostTransitionMetals + Metalloids + Lanthanoids + Actinoids, key=lambda x: Element(x).number)
+LigandElements = sorted(NonMetals, key=lambda x: Element(x).number)
+ActiveElements = sorted(MetalElements + NonMetals, key=lambda x: Element(x).number)
+AllElements = sorted(ActiveElements + Halogens + Unknown, key=lambda x: Element(x).number)
 
 def to_numpy(vector):
     if isinstance(vector, torch.Tensor):

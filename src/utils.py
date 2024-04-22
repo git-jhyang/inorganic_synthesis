@@ -45,3 +45,10 @@ def cosin_similarity(mat1, mat2, average=True):
         return cos_sim.mean()
     else:
         return cos_sim
+
+def find_nearest(vectors, reference, alpha=1):
+    out = []
+    for vec in vectors:
+        sser = squared_error(vec.reshape(1,-1), reference, average=False)
+        csim = cosin_similarity(vec.reshape(1,-1), reference, average=False)
+        i = np.argmin(sser - alpha * csim)

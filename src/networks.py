@@ -104,8 +104,13 @@ class GraphAttentionBlock(BaseNetwork):
                          activation = activation)
         
         activation = eval(f'torch.nn.{activation}()')
-        self.embed_layer = torch.nn.Sequential(
+        self.input_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
+            torch.nn.Dropout(dropout),
+            activation,
+        )
+        self.edge_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(edge_dim, hidden_dim),
             torch.nn.Dropout(dropout),
             activation,
         )
@@ -113,7 +118,7 @@ class GraphAttentionBlock(BaseNetwork):
         layers = []
         for _ in range(hidden_layers):
             layer = pyg.nn.GATv2Conv(in_channels=hidden_dim,
-                                     edge_dim=edge_dim,
+                                     edge_dim=hidden_dim,
                                      out_channels=hidden_dim,
                                      heads=heads,
                                      concat=False,
@@ -130,8 +135,9 @@ class GraphAttentionBlock(BaseNetwork):
         )
 
     def forward(self, x, edge_index, edge_attr):
-        h = self.embed_layer(x)
-        h = self.graph_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        node = self.input_embed_layer(x)
+        edge = self.edge_embed_layer(edge_attr)
+        h = self.graph_layer(x=node, edge_index=edge_index, edge_attr=edge)
         out = self.output_layer(h)
         return out
 
@@ -157,8 +163,13 @@ class GraphConvolutionBlock(BaseNetwork):
                          activation = activation)
 
         activation = eval(f'torch.nn.{activation}()')
-        self.embed_layer = torch.nn.Sequential(
+        self.input_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
+            torch.nn.BatchNorm1d(hidden_dim),
+            activation,
+        )
+        self.edge_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(edge_dim, hidden_dim),
             torch.nn.BatchNorm1d(hidden_dim),
             activation,
         )
@@ -166,7 +177,7 @@ class GraphConvolutionBlock(BaseNetwork):
         layers = []
         for _ in range(hidden_layers):
             layer = pyg.nn.CGConv(channels=hidden_dim,
-                                  dim=edge_dim,
+                                  dim=hidden_dim,
                                   aggr=aggr,
                                   batch_norm=batch_norm)
             layers.append((layer, 'x, edge_index, edge_attr -> x'))
@@ -175,13 +186,14 @@ class GraphConvolutionBlock(BaseNetwork):
 
         self.output_layer = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, output_dim),
-            torch.nn.BatchNorm1d(hidden_dim),
+            torch.nn.BatchNorm1d(output_dim),
             activation,
         )
 
     def forward(self, x, edge_index, edge_attr):
-        h = self.embed_layer(x)
-        h = self.graph_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        node = self.input_embed_layer(x)
+        edge = self.edge_embed_layer(edge_attr)
+        h = self.graph_layer(x=node, edge_index=edge_index, edge_attr=edge)
         out = self.output_layer(h)
         return out
 
@@ -271,7 +283,7 @@ class VAE(AutoEncoder):
         l = self.encoder(x)
         z, kld = self.reparameterization(l)
         y = self.decoder(z)
-        return torch.nn.Hardsigmoid()(y), kld
+        return torch.nn.Hardsigmoid()(y), kld, l, z
     
     def sampling(self, n, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
@@ -311,7 +323,7 @@ class CVAE(VAE):
         l = self.encoder(x)
         z, kld = self.reparameterization(l)
         y = self.decoder(torch.concat([z, condition], -1))
-        return torch.nn.Hardsigmoid()(y), kld
+        return torch.nn.Hardsigmoid()(y), kld, l, z
     
     def sampling(self, n, condition, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
@@ -333,11 +345,11 @@ class GraphCVAE(VAE):
                  decoder_hidden_dim:int = 32,
                  decoder_hidden_layers:int = 2,
                  batch_norm:bool = True, 
-                 dropout:float = 0,
+                 dropout:float = 0.5,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         
-        if graph.lower.startswith('conv'):
+        if graph.lower().startswith('conv'):
             super(AutoEncoder, self).__init__(input_dim = input_dim,
                                               latent_dim = latent_dim,
                                               edge_dim = edge_dim,
@@ -353,21 +365,21 @@ class GraphCVAE(VAE):
 
             self.encoder = GraphConvolutionBlock(input_dim=input_dim,
                                                  edge_dim=edge_dim,
-                                                 ouput_dim=latent_dim * 2,
+                                                 output_dim=latent_dim * 2,
                                                  hidden_dim=encoder_hidden_dim,
                                                  hidden_layers=encoder_hidden_layers,
-                                                 batch_norm=True,
+                                                 batch_norm=batch_norm,
                                                  activation=activation)
             
             self.decoder = GraphConvolutionBlock(input_dim=latent_dim + condition_dim,
                                                  edge_dim=edge_dim,
-                                                 ouput_dim=input_dim,
+                                                 output_dim=input_dim,
                                                  hidden_dim=encoder_hidden_dim,
                                                  hidden_layers=encoder_hidden_layers,
-                                                 batch_norm=True,
+                                                 batch_norm=batch_norm,
                                                  activation=activation)
 
-        elif graph.lower.startswith('att'):
+        elif graph.lower().startswith('att'):
             super(AutoEncoder, self).__init__(input_dim = input_dim,
                                               latent_dim = latent_dim,
                                               edge_dim = edge_dim,
@@ -384,7 +396,7 @@ class GraphCVAE(VAE):
 
             self.encoder = GraphAttentionBlock(input_dim=input_dim,
                                                edge_dim=edge_dim,
-                                               ouput_dim=latent_dim * 2,
+                                               output_dim=latent_dim * 2,
                                                hidden_dim=encoder_hidden_dim,
                                                hidden_layers=encoder_hidden_layers,
                                                heads=heads,
@@ -392,9 +404,9 @@ class GraphCVAE(VAE):
                                                dropout=dropout,
                                                activation=activation)
             
-            self.decoder = GraphAttentionBlock(input_dim=input_dim,
+            self.decoder = GraphAttentionBlock(input_dim=latent_dim + condition_dim,
                                                edge_dim=edge_dim,
-                                               ouput_dim=latent_dim * 2,
+                                               output_dim=input_dim,
                                                hidden_dim=encoder_hidden_dim,
                                                hidden_layers=encoder_hidden_layers,
                                                heads=heads,
@@ -408,5 +420,5 @@ class GraphCVAE(VAE):
         l = self.encoder(x=x, edge_index=edge_index, edge_attr=edge_attr)
         z, kld = self.reparameterization(l)
         y = self.decoder(x=torch.concat([z, condition], -1), edge_index=edge_index, edge_attr=edge_attr)
-        return torch.nn.Hardsigmoid()(y), kld
+        return torch.nn.Hardsigmoid()(y), kld, l, z
     

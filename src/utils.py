@@ -46,9 +46,26 @@ def cosin_similarity(mat1, mat2, average=True):
     else:
         return cos_sim
 
-def find_nearest(vectors, reference, alpha=1):
+def find_nearest(vectors, reference):
     out = []
     for vec in vectors:
         sser = squared_error(vec.reshape(1,-1), reference, average=False)
         csim = cosin_similarity(vec.reshape(1,-1), reference, average=False)
-        i = np.argmin(sser - alpha * csim)
+        i = np.argmin(sser - csim)
+        out.append([i, sser[i], csim[i]])
+    return np.array(out).T
+
+def cyclical_kld_annealing(epochs, start=0, stop=1, n_cycle=4, ratio=0.5):
+    '''
+    Code from paper 'Cyclical Annealing Schedule: A Simple Approach to Mitigating KL Vanishing'
+    arXiv: https://arxiv.org/abs/1903.10145
+    github: https://github.com/haofuml/cyclical_annealing
+
+    Scheduling KLD for better training of VAE.
+    '''
+    beta = np.ones(epochs)
+    period = epochs / n_cycle
+    step = (stop - start) / (period * ratio)
+    for i in range(int(period)):
+        beta[i::int(period)] = start + step * i
+    return np.clip(beta, start, stop)

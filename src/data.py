@@ -103,7 +103,6 @@ class ReactionData(BaseData):
                  precursor_feat_by_fraction:bool=False,
                  **kwargs):
         super().__init__(data, **kwargs)
-        self.graph_idx = 0
         self.target_comp = data[target_comp_key]
         self.target_comp_feat = composition_to_feature(composit_dict = self.target_comp, 
                                                        feature_type = target_feat_type, 
@@ -122,19 +121,31 @@ class ReactionData(BaseData):
                     )
                 )
                 self.metal_comp.append({e:f for e,f in precursor.items() if e in MetalElements})
+            self.precursor_comp_feat = np.vstack(precursor_comp_feat)
+            self._info_attrs.append('precursor_comp')
+            self._feature_attrs.append('precursor_comp_feat')
         else:
             for ele, frac in self.target_comp.items():
                 if ele in MetalElements:
                     self.metal_comp.append({ele:frac})
             self.metal_comp.append({})
-        self.metal_comp_feat = [
+
+        self.metal_comp_feat = np.vstack([
             composition_to_feature(
                 composit_dict = metal_comp,
                 feature_type = metal_feat_type, 
                 by_fraction = metal_feat_by_fraction
             ) for metal_comp in self.metal_comp
-        ]
-    
+        ])
+        edge_index = []
+        for i in range(self.metal_comp_feat.shape[0]):
+            for j in range(self.metal_comp_feat.shape[0]):
+                if i == j: continue
+                edge_index.append([i, j])
+        self.edge_index = np.array(edge_index).T
+        self._info_attrs.extend(['target_comp','metal_comp'])
+        self._feature_attrs.extend(['target_comp_feat','metal_comp_feat','edge_index'])
+
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(self):
         super().__init__()
@@ -301,5 +312,93 @@ class ConditionDataset(BaseDataset):
         feat = {
             'x':precursor_feat, 
             'condition':torch.concat([metal_feat, target_feat], -1)
+        }
+        return feat, info
+    
+class ReactionDataset(BaseDataset):
+    def __init__(self, 
+                 precursor_feat_by_fraction:bool=False,
+                 target_feat_type:str='active_composit',
+                 target_feat_by_fraction:bool=True,
+                 metal_feat_type:str='metal_composit',
+                 metal_feat_by_fraction:bool=False,
+                 train_data:bool=True,
+                 ):
+        
+        super().__init__()
+
+        self._precursor_feat_by_fraction = precursor_feat_by_fraction
+        self._target_feat_type = target_feat_type
+        self._target_feat_by_fraction = target_feat_by_fraction
+        self._metal_feat_type = metal_feat_type
+        self._metal_feat_by_fraction = metal_feat_by_fraction
+        
+        self._train_data = train_data
+
+        dump = self.from_data(data={'dump_tgt':{'Li':1}, 'dump_prec':[{'Li':1}]},
+                              target_comp_key = 'dump_tgt', 
+                              precursor_comp_key = 'dump_prec',
+                              info_attrs = [])
+        self.num_metal_feat = dump.metal_comp_feat.shape[-1]
+        self.num_target_feat = dump.target_comp_feat.shape[-1]
+        self.num_precursor_feat = dump.precursor_comp_feat.shape[-1]
+
+    def from_file(self, data_path='../data/unique_reaction.pkl.gz', extend_dataset=False, 
+                  target_comp_key='target_comp', precursor_comp_key='precursor_comp', **kwargs):
+        dataset = self.read_file(data_path)
+        self.from_dataset(dataset, extend_dataset=extend_dataset, 
+                          target_comp_key=target_comp_key, 
+                          precursor_comp_key=precursor_comp_key,
+                          **kwargs)
+    
+    def from_dataset(self, dataset:List[Dict], extend_dataset=False, 
+                     target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
+                     info_attrs=['id','raw_id','year'], **kwargs):
+        self.init_dataset(extend_dataset)
+        for data in dataset:
+            self._data.append(
+                self.from_data(data = data,
+                               target_comp_key = target_comp_key, 
+                               precursor_comp_key = precursor_comp_key,
+                               info_attrs = info_attrs,
+                               **kwargs)
+            )
+
+    def from_data(self, data, target_comp_key, precursor_comp_key=None, info_attrs=[], *args, **kwargs):
+        return ReactionData(data = data,
+                            target_comp_key = target_comp_key, 
+                            target_feat_type = self._target_feat_type,
+                            target_feat_by_fraction = self._target_feat_by_fraction,
+                            metal_feat_type = self._metal_feat_type,
+                            metal_feat_by_fraction = self._metal_feat_by_fraction,
+                            precursor_comp_key = precursor_comp_key,
+                            precursor_feat_type = 'ligand_composit',
+                            precursor_feat_by_fraction = self._precursor_feat_by_fraction,
+                            info_attrs = info_attrs,
+                            **kwargs,
+                            )
+
+    def cfn(self, dataset):
+        info = []
+        metal_feat = []
+        target_feat = []
+        edge_index = []
+        n = 0
+        for data in dataset:
+            n_node = data.metal_comp_feat.shape[0]
+            n_edge = data.edge_index.shape[1]
+            metal_feat.append(data.metal_comp_feat)
+            target_feat.append(data.target_comp_feat.repeat((n_edge, 1)))
+            edge_index.append(data.edge_index + n)
+            info.append(data.to_dict())
+            n += n_node
+        precursor_feat = None
+        if self._train_data:
+            precursor_feat = torch.concat([data.precursor_comp_feat for data in dataset])
+        feat = {
+            'x':precursor_feat,
+            'edge_attr':torch.concat(target_feat),
+            'edge_index':torch.concat(edge_index, -1),
+            'condition':torch.concat(metal_feat),
         }
         return feat, info

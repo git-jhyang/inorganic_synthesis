@@ -1,4 +1,4 @@
-from .utils import ActiveElements, MetalElements, LigandElements, NEAR_ZERO
+from .utils import ActiveElements, MetalElements, LigandElements, NEAR_ZERO, find_nearest
 import numpy as np
 import json, os
 
@@ -99,13 +99,13 @@ def feature_to_composit(feat_vec, tol=0.01):
         )
     return out
 
-def feature_to_ligand_index(feat_vec, tol=0.5):
-    comps = feature_to_composit(feat_vec, tol)
+def feature_to_ligand_index(feat_vec, csim_cut = 0.8, sser_cut = 0.3):
     out = []
-    for comp in comps:
-        eles = '-'.join(comp.keys())
-        i = ligand_label.get(eles)
-        out.append(-1 if i is None else i)
+    for idx, sser, csim in zip(*find_nearest(feat_vec, ligand_vector)):
+        if (sser > sser_cut) or (csim < csim_cut):
+            out.append(-1)
+        else:
+            out.append(idx)
     return out
 
 get_ligand_info()

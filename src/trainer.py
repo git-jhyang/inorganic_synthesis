@@ -9,11 +9,11 @@ class BaseTrainer:
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr)
         self.device = device
     
-    def train(self, dataloader):
+    def train(self, dataloader, *args, **kwargs):
         self.model.train()
         train_loss = 0
         for batch in dataloader:
-            loss, _ = self._eval_batch(batch)
+            loss, _ = self._eval_batch(batch, *args, **kwargs)
             
             self.opt.zero_grad()
             loss.backward()
@@ -22,23 +22,23 @@ class BaseTrainer:
             train_loss += loss
         return train_loss/len(dataloader)
     
-    def test(self, dataloader):
+    def test(self, dataloader, *args, **kwargs):
         self.model.eval()
         self._init_output()
         test_loss = 0
         with torch.no_grad():
             for batch in dataloader:
-                loss, output = self._eval_batch(batch)
+                loss, output = self._eval_batch(batch, *args, **kwargs)
                 self._parse_output(batch, output)
                 test_loss += loss
         return test_loss/len(dataloader), self._output
         
-    def predict(self, dataloader):
+    def predict(self, dataloader, *args, **kwargs):
         self.model.eval()
         self._init_output()
         with torch.no_grad():
             for batch in dataloader:
-                output = self._eval_batch(batch, compute_loss=False)
+                output = self._eval_batch(batch, compute_loss=False, *args, **kwargs)
                 self._parse_output(batch, output)
         return self._output
 
@@ -55,7 +55,7 @@ class AETrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda'):
         super(AETrainer, self).__init__(model, lr, device)
 
-    def _eval_batch(self, batch, compute_loss=True):
+    def _eval_batch(self, batch, compute_loss=True, *args, **kwargs):
         feat, _ = batch
         latent, pred = self.model(feat)
         output = [latent.detach().cpu().numpy(), pred.detach().cpu().numpy()]
@@ -89,32 +89,36 @@ class VAETrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda'):
         super(VAETrainer, self).__init__(model, lr, device)
     
-    def _eval_batch(self, batch, compute_loss=True):
+    def _eval_batch(self, batch, compute_loss=True, beta=0.1):
         feat, _ = batch
-        pred, kld = self.model(**feat)
-        output = [kld.detach().cpu().numpy(), pred.detach().cpu().numpy()]
+        pred, kld, l, z = self.model(**feat)
+        output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), l.detach().cpu().numpy(), z.detach().cpu().numpy()]
         if compute_loss:
             mse = torch.mean(torch.sum(torch.square(feat['x'] - pred), -1))
-            loss = mse + kld.sum()
+            loss = mse + beta * kld.sum()
             return loss, output
         else:
             return output
         
     def _parse_output(self, batch, output):
-        kld, pred = output
+        pred, kld, latent, z = output
         feat, info = batch
         if self._output is None:
             self._output = {
                 'info': info,
-                'kld': kld,
+                'kld': np.array(kld),
                 'input': feat['x'].cpu().numpy(),
-                'pred': pred,
+                'pred': np.array(pred),
+                'latent': np.array(latent),
+                'z': np.array(z),
             }
         else:
             self._output['info'].extend(info)
             self._output['kld'] = np.vstack([self._output['kld'], kld])
             self._output['input'] = np.vstack([self._output['input'], feat['x'].cpu().numpy()])
-            self._output['pred'] = np.vstack([self._output['pred'], pred])
+            self._output['pred'] = np.concatenate([self._output['pred'], pred], axis=0)
+            self._output['latent'] = np.vstack([self._output['latent'], latent])
+            self._output['z'] = np.vstack([self._output['z'], z])
 
     def predict(self, dataloader, n_samples=1000):
         self.model.eval()
@@ -123,5 +127,5 @@ class VAETrainer(BaseTrainer):
             for batch in dataloader:
                 for feat, info in zip(*batch):
                     pred = self.model.sampling(n_samples, **feat)
-                    self._parse_output(None, [0, pred.cpu().numpy()[np.newaxis, ...], info])
+                    self._parse_output([None, info], [pred.cpu().numpy()[np.newaxis, ...], [[0]], [[0]], [[0]]])
         return self._output

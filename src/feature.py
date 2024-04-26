@@ -1,6 +1,6 @@
-from .utils import ActiveElements, MetalElements, LigandElements, NEAR_ZERO, find_nearest
+from .utils import ActiveElements, MetalElements, LigandElements, NEAR_ZERO, find_nearest, Element
 import numpy as np
-import json, os
+import json, os, gzip, pickle
 
 PRINT_EXCEPTION_WARNING = 'Warning: element "{}" is not included in feature type "{}"\n'
 
@@ -11,15 +11,44 @@ for k in ['cgcnn','elemnet','magpie','magpie_sc','mat2vec','matscholar','megnet1
 
 composit_fnc = ['active_composit','metal_composit','ligand_composit']
 
-def get_ligand_info():
-    global ligand_label, ligand_index, ligand_vector
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/ligand_freq.json'),'r') as f:
-        ligand_frequency = json.load(f)
+def init_info(min_count=0):
+    global blacklist, ligand_count, ligand_vector, ligand_list, precursor_count, precursor_vector, precursor_list
+    with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/unique_ligand.pkl.gz'),'rb') as f:
+        unique_ligand = pickle.load(f)
 
-    ligand_label = {l:i for i,l in enumerate(ligand_frequency.keys())}
-    ligand_index = {i:l for i,l in enumerate(ligand_frequency.keys())}
-    ligand_index.update({-1:'Unk'})
-    ligand_vector = np.vstack([ligand_composit_feature({e:1 for e in l.replace('Metal','Li').split('-')}, float) for l in ligand_label.keys()])
+    ligand_count = {}
+    precursor_count = {}
+    for ligand, _ligand_data in unique_ligand.items():
+        for metal, _metal_data in _ligand_data['metals'].items():
+            precursor = tuple(sorted(metal + ligand, key=lambda x: Element(x).number))
+            c = _metal_data['count']
+            if len(metal) == 0:
+                if precursor not in ligand_count.keys():
+                    ligand_count[ligand] = 0
+                    precursor_count[ligand] = 0
+                ligand_count[ligand] += c
+                precursor_count[ligand] += c
+            else:
+                if precursor not in precursor_count.keys():
+                    precursor_count[precursor] = 0
+                if (('Metal',) + ligand) not in ligand_count.keys():
+                    ligand_count[(('Metal',) + ligand)] = 0
+                ligand_count[(('Metal',) + ligand)] += c
+                precursor_count[precursor] += c
+    blacklist = [k for k,v in ligand_count.items() if v < min_count]
+    blacklist += [k for k,v in precursor_count.items() if v < min_count]
+    ligand_count = {k:v for k,v in sorted(ligand_count.items(), key=lambda x: x[1], reverse=True) if k not in blacklist}
+    ligand_count.update({():0})
+    ligand_list = list(ligand_count.keys())
+    precursor_count = {k:v for k,v in sorted(precursor_count.items(), key=lambda x: x[1], reverse=True) if k not in blacklist}
+    precursor_count.update({():0})
+    precursor_list = list(precursor_count.keys())
+    ligand_vector = np.vstack([ligand_composit_feature({e if e != 'Metal' else 'Li':1 for e in k}) for k in ligand_list])
+    precursor_vector = np.vstack([active_composit_feature({e:1 for e in k}) for k in precursor_list])
+#    ligand_label = {l:i for i,l in enumerate(ligand_frequency.keys())}
+#    ligand_index = {i:l for i,l in enumerate(ligand_frequency.keys())}
+#    ligand_index.update({-1:'Unk'})
+#    ligand_vector = np.vstack([ligand_composit_feature({e:1 for e in l.replace('Metal','Li').split('-')}, float) for l in ligand_label.keys()])
 
 def composition_to_feature(composit_dict, 
                            feature_type='active_composit', 
@@ -56,7 +85,7 @@ def composition_to_feature(composit_dict,
     else:
         raise TypeError(f'feature type [{feature_type}] is not supported', composit_fnc + list(elmd.keys()))
 
-def active_composit_feature(composit_dict, dtype, by_fraction=True, norm=True, *args, **kwargs):
+def active_composit_feature(composit_dict, dtype=float, by_fraction=True, norm=True, *args, **kwargs):
     feat_vec = np.zeros(len(ActiveElements), dtype=dtype)
     for ele, frac in composit_dict.items():
         if frac < NEAR_ZERO: continue
@@ -65,7 +94,7 @@ def active_composit_feature(composit_dict, dtype, by_fraction=True, norm=True, *
         feat_vec /= feat_vec.sum()
     return feat_vec
 
-def metal_composit_feature(composit_dict, dtype, by_fraction=True, *args, **kwargs):
+def metal_composit_feature(composit_dict, dtype=float, by_fraction=True, *args, **kwargs):
     feat_vec = np.zeros(len(MetalElements) + 1, dtype=dtype)
     for ele, frac in composit_dict.items():
         feat_vec[MetalElements.index(ele) + 1] = frac if by_fraction else 1
@@ -73,7 +102,7 @@ def metal_composit_feature(composit_dict, dtype, by_fraction=True, *args, **kwar
         feat_vec[0] = 1
     return feat_vec
 
-def ligand_composit_feature(composit_dict, dtype, by_fraction=True, *args, **kwargs):
+def ligand_composit_feature(composit_dict, dtype=float, by_fraction=True, *args, **kwargs):
     feat_vec = np.zeros(len(LigandElements) + 1, dtype=dtype)
     for ele, frac in composit_dict.items():
         if ele in MetalElements:
@@ -82,8 +111,9 @@ def ligand_composit_feature(composit_dict, dtype, by_fraction=True, *args, **kwa
             feat_vec[LigandElements.index(ele) + 1] = frac if by_fraction else 1
     return feat_vec
 
-def feature_to_composit(feat_vec, tol=0.01):
+def feature_to_composit(feat_vec, tol=1e-5):
     n_feat = feat_vec.shape[-1]
+    feat_vec = feat_vec.reshape(-1, n_feat)
     if n_feat not in [97, 87, 12]:
         raise TypeError(f'feature type is not supported', composit_fnc)
     if n_feat == 97: # active_composit
@@ -99,13 +129,40 @@ def feature_to_composit(feat_vec, tol=0.01):
         )
     return out
 
-def feature_to_ligand_index(feat_vec, csim_cut = 0.8, sser_cut = 0.3):
+def parse_feature(feat_vec, csim_cut = 0.5, sser_cut = 1.0, to_string=False):
     out = []
-    for idx, sser, csim in zip(*find_nearest(feat_vec, ligand_vector)):
+    if feat_vec.shape[-1] == 12:
+        ref = ligand_vector
+        chrs = np.array(['-'.join(k) for k in ligand_list[:-1]] + ['Unknown'])
+    elif feat_vec.shape[-1] == 97:
+        ref = precursor_vector
+        chrs = np.array(['-'.join(k) for k in precursor_list[:-1]] + ['Unknown'])
+    else:
+        raise ValueError('Not supported feature type')
+
+    for idx, sser, csim in zip(*find_nearest(feat_vec, ref)):
         if (sser > sser_cut) or (csim < csim_cut):
             out.append(-1)
         else:
-            out.append(idx)
-    return out
+            out.append(int(idx))
+    if to_string:
+        return chrs[out]
+    else:
+        return out
 
-get_ligand_info()
+def parse_composit(comp, feature_type='active_composit'):
+    if feature_type.startswith('active'):
+        ref = precursor_list
+    elif feature_type.startswith('ligand'):
+        ref = ligand_list
+    key = tuple(sorted(comp.keys(), key=lambda x: Element(x).number))
+    return ref.index(key)
+
+def check_blacklist(comp):
+    key = tuple(k for k in sorted(comp.keys(), key=lambda x: Element(x).number))
+    if key in blacklist:
+        return True
+    else:
+        return False
+    
+init_info(20)

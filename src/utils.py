@@ -38,9 +38,11 @@ def squared_error(mat1, mat2, average=True):
 def cosin_similarity(mat1, mat2, average=True):
     x = to_numpy(mat1)
     y = to_numpy(mat2)
-    x = x / np.sqrt(np.sum(np.square(x), -1, keepdims=True))
-    y = y / np.sqrt(np.sum(np.square(y), -1, keepdims=True))
-    cos_sim = np.sum(x * y, -1)
+    l = np.sqrt(np.sum(np.square(x), -1, keepdims=True)) * np.sqrt(np.sum(np.square(y), -1, keepdims=True))
+    m = (l == 0).squeeze()
+    cos_sim = np.zeros(m.shape, dtype=float)
+    cos_sim[~m] = np.sum((x * y)[~m] / l[~m], -1)
+    cos_sim[m] = 1 - np.sqrt(np.square(x - y)[m].sum(-1))
     if average:
         return cos_sim.mean()
     else:
@@ -48,9 +50,9 @@ def cosin_similarity(mat1, mat2, average=True):
 
 def find_nearest(vectors, reference):
     out = []
-    for vec in vectors:
-        sser = squared_error(vec.reshape(1,-1), reference, average=False)
-        csim = cosin_similarity(vec.reshape(1,-1), reference, average=False)
+    for vec in vectors.reshape(-1, reference.shape[-1]):
+        sser = squared_error(vec, reference, average=False)
+        csim = cosin_similarity(vec, reference, average=False)
         i = np.argmin(sser - csim)
         out.append([i, sser[i], csim[i]])
     return np.array(out).T
@@ -69,3 +71,6 @@ def cyclical_kld_annealing(epochs, start=0, stop=1, n_cycle=4, ratio=0.5):
     for i in range(int(period)):
         beta[i::int(period)] = start + step * i
     return np.clip(beta, start, stop)
+
+#class StratifiedRandomSampler:
+#    def __init__(self, dataset, class_attr)

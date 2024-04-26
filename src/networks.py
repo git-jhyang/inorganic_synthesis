@@ -43,7 +43,8 @@ class FCNNBlock(BaseNetwork):
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
                  batch_norm:bool = True, 
-                 dropout:float = 0,
+                 negative_slope:float = 0.1,
+                 dropout:float = 0.0,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         super().__init__(input_dim = input_dim,
@@ -54,7 +55,10 @@ class FCNNBlock(BaseNetwork):
                          dropout = dropout,
                          activation = activation)
         
-        activation = eval(f'torch.nn.{activation}()')
+        try:
+            activation = eval(f'torch.nn.{activation}({negative_slope})')
+        except:
+            activation = eval(f'torch.nn.{activation}()')
 
         self.embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
@@ -103,22 +107,27 @@ class GraphAttentionBlock(BaseNetwork):
                          dropout = dropout,
                          activation = activation)
         
-        activation = eval(f'torch.nn.{activation}()')
+        try:
+            activation = eval(f'torch.nn.{activation}({negative_slope})')
+        except:
+            activation = eval(f'torch.nn.{activation}()')
+
         self.input_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
             torch.nn.Dropout(dropout),
             activation,
         )
-        self.edge_embed_layer = torch.nn.Sequential(
-            torch.nn.Linear(edge_dim, hidden_dim),
-            torch.nn.Dropout(dropout),
-            activation,
-        )
+#        self.edge_embed_layer = torch.nn.Sequential(
+#            torch.nn.Linear(edge_dim, hidden_dim),
+#            torch.nn.Dropout(dropout),
+#            activation,
+#        )
 
         layers = []
         for _ in range(hidden_layers):
             layer = pyg.nn.GATv2Conv(in_channels=hidden_dim,
-                                     edge_dim=hidden_dim,
+#                                     edge_dim=hidden_dim,
+                                     edge_dim=edge_dim,
                                      out_channels=hidden_dim,
                                      heads=heads,
                                      concat=False,
@@ -135,9 +144,9 @@ class GraphAttentionBlock(BaseNetwork):
         )
 
     def forward(self, x, edge_index, edge_attr):
-        node = self.input_embed_layer(x)
-        edge = self.edge_embed_layer(edge_attr)
-        h = self.graph_layer(x=node, edge_index=edge_index, edge_attr=edge)
+        x = self.input_embed_layer(x)
+#        edge_attr = self.edge_embed_layer(edge_attr)
+        h = self.graph_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)
         out = self.output_layer(h)
         return out
 
@@ -148,8 +157,10 @@ class GraphConvolutionBlock(BaseNetwork):
                  output_dim:int, 
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
-                 aggr:str='mean',
-                 batch_norm:bool = True,
+                 aggr:str='add',
+#                 batch_norm:bool = True,
+                 negative_slope:float = 0.1,
+                 dropout = 0.3,
                  activation:str = 'LeakyReLU',
                  **kwargs):
         
@@ -159,18 +170,25 @@ class GraphConvolutionBlock(BaseNetwork):
                          hidden_dim = hidden_dim,
                          hidden_layers = hidden_layers,
                          aggr = aggr,
-                         batch_norm = batch_norm,
+#                         batch_norm = batch_norm,
+                         dropout = dropout,
                          activation = activation)
 
-        activation = eval(f'torch.nn.{activation}()')
+        try:
+            activation = eval(f'torch.nn.{activation}({negative_slope})')
+        except:
+            activation = eval(f'torch.nn.{activation}()')
+
         self.input_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
             torch.nn.BatchNorm1d(hidden_dim),
+#            torch.nn.Dropout(dropout),
             activation,
         )
         self.edge_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(edge_dim, hidden_dim),
             torch.nn.BatchNorm1d(hidden_dim),
+#            torch.nn.Dropout(dropout),
             activation,
         )
 
@@ -178,22 +196,33 @@ class GraphConvolutionBlock(BaseNetwork):
         for _ in range(hidden_layers):
             layer = pyg.nn.CGConv(channels=hidden_dim,
                                   dim=hidden_dim,
+#                                  dim=edge_dim,
                                   aggr=aggr,
-                                  batch_norm=batch_norm)
+                                  batch_norm=False)
+
+#            layer = pyg.nn.ResGatedGraphConv(in_channels = hidden_dim,
+#                                             out_channels = hidden_dim,
+#                                             act = activation,
+##                                             edge_dim = edge_dim
+#                                              edge_dim = hidden_dim
+#                                             )
             layers.append((layer, 'x, edge_index, edge_attr -> x'))
+#            if batch_norm:
+            layers.append((torch.nn.Dropout(dropout), 'x -> x'))
 
         self.graph_layer = pyg.nn.Sequential('x, edge_index, edge_attr', layers)
 
         self.output_layer = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, output_dim),
+#            torch.nn.Dropout(dropout),
             torch.nn.BatchNorm1d(output_dim),
             activation,
         )
 
     def forward(self, x, edge_index, edge_attr):
-        node = self.input_embed_layer(x)
-        edge = self.edge_embed_layer(edge_attr)
-        h = self.graph_layer(x=node, edge_index=edge_index, edge_attr=edge)
+        x = self.input_embed_layer(x)
+        edge_attr = self.edge_embed_layer(edge_attr)
+        h = self.graph_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)
         out = self.output_layer(h)
         return out
 
@@ -206,7 +235,7 @@ class AutoEncoder(BaseNetwork):
                  decoder_hidden_dim:int = 32,
                  decoder_hidden_layers:int = 2,
                  batch_norm:bool = True, 
-                 dropout:float = 0,
+                 dropout:float = 0.0,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         super().__init__(input_dim = input_dim,
@@ -219,10 +248,20 @@ class AutoEncoder(BaseNetwork):
                          dropout = dropout,
                          activation = activation)
 
-        self.encoder = FCNNBlock(input_dim, latent_dim, encoder_hidden_dim, 
-                                encoder_hidden_layers, batch_norm, dropout, activation)
-        self.decoder = FCNNBlock(latent_dim, input_dim, decoder_hidden_dim, 
-                                decoder_hidden_layers, batch_norm, dropout, activation)
+        self.encoder = FCNNBlock(input_dim = input_dim, 
+                                 output_dim = latent_dim, 
+                                 hidden_dim = encoder_hidden_dim, 
+                                 hidden_layers = encoder_hidden_layers, 
+                                 batch_norm = batch_norm, 
+                                 dropout = dropout, 
+                                 activation = activation)
+        self.decoder = FCNNBlock(input_dim = latent_dim, 
+                                 output_dim = input_dim, 
+                                 hidden_dim = decoder_hidden_dim, 
+                                 hidden_layers = decoder_hidden_layers, 
+                                 batch_norm = batch_norm, 
+                                 dropout = dropout, 
+                                 activation = activation)
 
     def forward(self, x, *args, **kwargs):
         l = self.encoder(x)
@@ -254,8 +293,8 @@ class VAE(AutoEncoder):
                  encoder_hidden_layers:int = 2,
                  decoder_hidden_dim:int = 32,
                  decoder_hidden_layers:int = 2,
-                 batch_norm:bool = True, 
-                 dropout:float = 0,
+                 batch_norm:bool = False, 
+                 dropout:float = 0.4,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         super(AutoEncoder, self).__init__(input_dim = input_dim,
@@ -268,10 +307,21 @@ class VAE(AutoEncoder):
                                           dropout = dropout,
                                           activation = activation)
         
-        self.encoder = FCNNBlock(input_dim, latent_dim * 2, encoder_hidden_dim, 
-                                encoder_hidden_layers, batch_norm, dropout, activation)
-        self.decoder = FCNNBlock(latent_dim, input_dim, decoder_hidden_dim, 
-                                decoder_hidden_layers, batch_norm, dropout, activation)
+        self.encoder = FCNNBlock(input_dim = input_dim, 
+                                 output_dim = latent_dim * 2, 
+                                 hidden_dim = encoder_hidden_dim, 
+                                 hidden_layers = encoder_hidden_layers, 
+                                 batch_norm = batch_norm, 
+                                 dropout = dropout, 
+                                 activation = activation)
+        
+        self.decoder = FCNNBlock(input_dim = latent_dim, 
+                                 output_dim = input_dim, 
+                                 hidden_dim = decoder_hidden_dim, 
+                                 hidden_layers = decoder_hidden_layers, 
+                                 batch_norm = batch_norm, 
+                                 dropout = dropout, 
+                                 activation = activation)
 
     def reparameterization(self, l):
         mu, log_var = torch.chunk(l, 2, -1)
@@ -299,8 +349,8 @@ class CVAE(VAE):
                  encoder_hidden_layers:int = 2,
                  decoder_hidden_dim:int = 32,
                  decoder_hidden_layers:int = 2,
-                 batch_norm:bool = True, 
-                 dropout:float = 0,
+                 batch_norm:bool = False, 
+                 dropout:float = 0.4,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         super(AutoEncoder, self).__init__(input_dim = input_dim,
@@ -314,10 +364,21 @@ class CVAE(VAE):
                                           dropout = dropout,
                                           activation = activation)
         
-        self.encoder = FCNNBlock(input_dim, latent_dim * 2, encoder_hidden_dim, 
-                                encoder_hidden_layers, batch_norm, dropout, activation)
-        self.decoder = FCNNBlock(latent_dim + condition_dim, input_dim, encoder_hidden_dim, 
-                                encoder_hidden_layers, batch_norm, dropout, activation)
+        self.encoder = FCNNBlock(input_dim = input_dim, 
+                                 output_dim = latent_dim * 2, 
+                                 hidden_dim = encoder_hidden_dim, 
+                                 hidden_layers = encoder_hidden_layers, 
+                                 batch_norm = batch_norm, 
+                                 dropout = dropout, 
+                                 activation = activation)
+        
+        self.decoder = FCNNBlock(input_dim = latent_dim + condition_dim, 
+                                 output_dim = input_dim, 
+                                 hidden_dim = decoder_hidden_dim, 
+                                 hidden_layers = decoder_hidden_layers, 
+                                 batch_norm = batch_norm, 
+                                 dropout = dropout, 
+                                 activation = activation)
 
     def forward(self, x, condition, *args, **kwargs):
         l = self.encoder(x)
@@ -330,6 +391,44 @@ class CVAE(VAE):
         y = self.decoder(torch.concat([z, condition.repeat((n, 1)) ], -1))
         return torch.nn.Hardsigmoid()(y)
 
+class ClassCVAE(CVAE):
+    def __init__(self,
+                 input_dim:int, 
+                 latent_dim:int, 
+                 condition_dim:int,
+                 vocab_dim:int,
+                 encoder_hidden_dim:int = 32,
+                 encoder_hidden_layers:int = 2,
+                 decoder_hidden_dim:int = 32,
+                 decoder_hidden_layers:int = 2,
+                 batch_norm:bool = True, 
+                 dropout:float = 0,
+                 activation:str = 'LeakyReLU',
+                 **kwargs):
+        super().__init__(input_dim = input_dim,
+                         latent_dim = latent_dim,
+                         condition_dim = condition_dim,
+                         vocab_dim = vocab_dim,
+                         encoder_hidden_dim = encoder_hidden_dim,
+                         encoder_hidden_layers = encoder_hidden_layers,
+                         decoder_hidden_dim = decoder_hidden_dim,
+                         decoder_hidden_layers = decoder_hidden_layers,
+                         batch_norm = batch_norm,
+                         dropout = dropout,
+                         activation = activation)
+
+        self.inverse_embedding = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, vocab_dim),
+            torch.nn.Softmax(1),
+        )
+
+    def forward(self, x, condition, *args, **kwargs):
+        l = self.encoder(x)
+        z, kld = self.reparameterization(l)
+        h = self.decoder(torch.concat([z, condition], -1))
+        y = self.inverse_embedding(h)
+        return y, kld, l, z
+        
 class GraphCVAE(VAE):
     def __init__(self,
                  input_dim:int, 
@@ -422,3 +521,50 @@ class GraphCVAE(VAE):
         y = self.decoder(x=torch.concat([z, condition], -1), edge_index=edge_index, edge_attr=edge_attr)
         return torch.nn.Hardsigmoid()(y), kld, l, z
     
+class GraphClassCVAE(GraphCVAE):
+    def __init__(self, 
+                 input_dim:int, 
+                 latent_dim:int, 
+                 vocab_dim:int,
+                 condition_dim:int,
+                 edge_dim:int,
+                 graph:str='conv',
+                 aggr:str='mean',
+                 heads:int = 12,
+                 negative_slope:float=0.1,
+                 encoder_hidden_dim:int = 64,
+                 encoder_hidden_layers:int = 4,
+                 decoder_hidden_dim:int = 64,
+                 decoder_hidden_layers:int = 4,
+                 batch_norm:bool = True, 
+                 dropout:float = 0.4,
+                 activation:str = 'LeakyReLU',
+                 **kwargs): 
+        super().__init__(input_dim = input_dim,
+                         latent_dim = latent_dim,
+                         condition_dim = condition_dim,
+                         vocab_dim = vocab_dim,
+                         edge_dim = edge_dim,
+                         graph = graph,
+                         aggr = aggr,
+                         heads = heads,
+                         negative_slope = negative_slope,
+                         encoder_hidden_dim = encoder_hidden_dim,
+                         encoder_hidden_layers = encoder_hidden_layers,
+                         decoder_hidden_dim = decoder_hidden_dim,
+                         decoder_hidden_layers = decoder_hidden_layers,
+                         batch_norm = batch_norm,
+                         dropout = dropout,
+                         activation = activation,
+                )
+        self.inverse_embedding = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, vocab_dim),
+            torch.nn.Softmax(1),
+        )
+    
+    def forward(self, x, edge_index, edge_attr, condition, *args, **kwargs):
+        l = self.encoder(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        z, kld = self.reparameterization(l)
+        h = self.decoder(x=torch.concat([z, condition], -1), edge_index=edge_index, edge_attr=edge_attr)
+        y = self.inverse_embedding(h)
+        return y, kld, l, z

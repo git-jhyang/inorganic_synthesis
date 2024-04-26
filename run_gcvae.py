@@ -2,12 +2,11 @@ import os, pickle
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-from src.constants import cosin_similarity
 from src.networks import CVAE, GraphCVAE
 from src.data import ConditionDataset, ReactionDataset
 from src.trainer import VAETrainer
-from src.feature import feature_to_ligand_index
-from src.utils import squared_error, cyclical_kld_annealing
+from src.feature import parse_feature
+from src.utils import squared_error, cosin_similarity, cyclical_kld_annealing
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -38,7 +37,7 @@ def main(args):
         args.latent_dim, args.hidden_dim, args.hidden_layers, 
     )
 
-    output_path = f'/home/jhyang/WORKSPACES/MODELS/isyn/VAE_graph/{identifier}'
+    output_path = f'/home/jhyang/WORKSPACES/MODELS/isyn/VAE_test/{identifier}'
     if os.path.isdir(output_path):
         for i in range(100):
             if not os.path.isdir(output_path + f'_case_{i:02d}'):
@@ -47,7 +46,8 @@ def main(args):
     os.makedirs(output_path, exist_ok=True)
     writer = SummaryWriter(output_path)
 
-    DS = ReactionDataset(target_feat_type=args.target_feature_type)
+    DS = ReactionDataset(target_feat_type=args.target_feature_type,
+                         precursor_feat_type='active_composit')
     DS.from_file(data_path='./data/unique_reaction.pkl.gz')
     DS.to('cuda')
 
@@ -72,7 +72,7 @@ def main(args):
     )
 
     trainer = VAETrainer(model, 1e-4, device='cuda')
-    betaset = cyclical_kld_annealing(args.epochs, n_cycle=10)
+    betaset = cyclical_kld_annealing(args.epochs, n_cycle=4, stop=0.1)
     best_loss = 1e5
     count = 0
     
@@ -82,8 +82,8 @@ def main(args):
 
         if epoch % args.logging_interval == 0:
             valid_loss, valid_output = trainer.test(valid_dl, beta=beta)
-            v_t = feature_to_ligand_index(valid_output['input'])
-            v_p = feature_to_ligand_index(valid_output['pred'])
+            v_t = parse_feature(valid_output['input'])
+            v_p = parse_feature(valid_output['pred'])
             v_acc = accuracy_score(v_t, v_p)
             v_f1 = f1_score(v_t, v_p, average='micro')
             v_mse = squared_error(valid_output['input'], valid_output['pred'])
@@ -96,8 +96,8 @@ def main(args):
             writer.add_scalar('CSIM/Valid', v_csim, epoch)
     
             test_loss, test_output = trainer.test(test_dl, beta=beta)
-            t_t = feature_to_ligand_index(test_output['input'])
-            t_p = feature_to_ligand_index(test_output['pred'])
+            t_t = parse_feature(test_output['input'])
+            t_p = parse_feature(test_output['pred'])
             t_acc = accuracy_score(t_t, t_p)
             t_f1 = f1_score(t_t, t_p, average='micro')
             t_mse = squared_error(test_output['input'], test_output['pred'])
@@ -138,11 +138,5 @@ if __name__ == '__main__':
     t1 = time.time()
 
     main(args)
-
-    with open('logging.txt','a') as f:
-        f.write('{:10.2f} min - {:s}_batch_{:04d}_mdim_{:02d}_{:03d}_{:1d}_{:03d}_{:1d}\n'.format(
-            (time.time() - t1) / 60.0,
-            args.target_feature_type, args.batch_size, args.latent_dim, 
-            args.encoder_hidden_dim, args.encoder_hidden_layers, 
-            args.decoder_hidden_dim, args.decoder_hidden_layers, 
-        ))
+    
+    print('{:10.2f} min - {}'.format((time.time() - t1) / 60.0, args))

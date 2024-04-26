@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from src.feature import feature_to_ligand_index
 
 class BaseTrainer:
     def __init__(self, model, lr, device='cpu'):
@@ -53,7 +52,7 @@ class BaseTrainer:
 
 class AETrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda'):
-        super(AETrainer, self).__init__(model, lr, device)
+        super().__init__(model, lr, device)
 
     def _eval_batch(self, batch, compute_loss=True, *args, **kwargs):
         feat, _ = batch
@@ -75,50 +74,62 @@ class AETrainer(BaseTrainer):
         if self._output is None:
             self._output = {
                 'info':info,
-                'target':feat.cpu().numpy(),
                 'pred':pred,
                 'latent':latent,
             }
+            if feat is not None:
+                self._output.update({'input':feat['x'].cpu().numpy()})
         else:
             self._output['info'].extend(info)
-            self._output['target'] = np.vstack([self._output['target'], feat.cpu().numpy()])
             self._output['pred']   = np.vstack([self._output['pred'], pred])
             self._output['latent'] = np.vstack([self._output['latent'], latent])
+            if feat is not None:
+                self._output['input'] = np.vstack([self._output['input'], feat['x'].cpu().numpy()])
 
 class VAETrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda'):
-        super(VAETrainer, self).__init__(model, lr, device)
+        super().__init__(model, lr, device)
     
     def _eval_batch(self, batch, compute_loss=True, beta=0.1):
         feat, _ = batch
         pred, kld, l, z = self.model(**feat)
-        output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), l.detach().cpu().numpy(), z.detach().cpu().numpy()]
+        mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
+        output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), mu.numpy(), log_var.exp().numpy(), z.detach().cpu().numpy()]
         if compute_loss:
             mse = torch.mean(torch.sum(torch.square(feat['x'] - pred), -1))
+#            celoss = torch.nn.CrossEntropyLoss()()
             loss = mse + beta * kld.sum()
             return loss, output
         else:
             return output
         
     def _parse_output(self, batch, output):
-        pred, kld, latent, z = output
+        pred, kld, mu, var, z = output
         feat, info = batch
         if self._output is None:
             self._output = {
                 'info': info,
                 'kld': np.array(kld),
-                'input': feat['x'].cpu().numpy(),
                 'pred': np.array(pred),
-                'latent': np.array(latent),
+                'mu': np.array(mu),
+                'var': np.array(var),
                 'z': np.array(z),
             }
+            if feat is not None:
+                self._output.update({
+                    'input': feat['x'].cpu().numpy(),
+                    'label': feat['label'].cpu().numpy().reshape(-1),
+                })
         else:
             self._output['info'].extend(info)
             self._output['kld'] = np.vstack([self._output['kld'], kld])
-            self._output['input'] = np.vstack([self._output['input'], feat['x'].cpu().numpy()])
-            self._output['pred'] = np.concatenate([self._output['pred'], pred], axis=0)
-            self._output['latent'] = np.vstack([self._output['latent'], latent])
+            self._output['pred'] = np.vstack([self._output['pred'], pred])
+            self._output['mu'] = np.vstack([self._output['mu'], mu])
+            self._output['var'] = np.vstack([self._output['var'], var])
             self._output['z'] = np.vstack([self._output['z'], z])
+            if feat is not None:
+                self._output['input'] = np.vstack([self._output['input'], feat['x'].cpu().numpy()])
+                self._output['label'] = np.hstack([self._output['label'], feat['label'].cpu().numpy().reshape(-1)])
 
     def predict(self, dataloader, n_samples=1000):
         self.model.eval()
@@ -127,5 +138,22 @@ class VAETrainer(BaseTrainer):
             for batch in dataloader:
                 for feat, info in zip(*batch):
                     pred = self.model.sampling(n_samples, **feat)
-                    self._parse_output([None, info], [pred.cpu().numpy()[np.newaxis, ...], [[0]], [[0]], [[0]]])
+                    self._parse_output([None, info], [pred.cpu().numpy()[np.newaxis, ...], *np.zeros((4,1,1))])
         return self._output
+
+class VAEClassTrainer(VAETrainer):
+    def __init__(self, model, lr, device='cuda'):
+        super().__init__(model, lr, device)
+    
+    def _eval_batch(self, batch, compute_loss=True, beta=0.1):
+        feat, _ = batch
+        pred, kld, l, z = self.model(**feat)
+        mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
+        output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), mu.numpy(), log_var.exp().numpy(), z.detach().cpu().numpy()]
+        if compute_loss:
+            celoss = torch.nn.CrossEntropyLoss()(pred, feat['label'])
+#            mse = torch.mean(torch.sum(torch.square(feat['x'] - pvec), -1))
+            loss = celoss + beta * kld.sum()
+            return loss, output
+        else:
+            return output

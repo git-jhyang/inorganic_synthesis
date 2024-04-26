@@ -1,5 +1,5 @@
 import multiprocessing as mp
-import run_cvae as R
+import run_fcvae as R
 import numpy as np
 
 hidden_dims = [32, 64, 128, 256]
@@ -21,7 +21,7 @@ def exc(i):
     R.args.hidden_layers = hidden_layers[i_hl]
     R.args.latent_dim = latent_dims[i_ld]
     R.args.target_feature_type = target_feature_type[i_te]
-    R.args.graph_type = graph_type[i_gt]
+    R.args.graph = graph_type[i_gt]
     R.main(R.args)
 
 with mp.Pool(2) as pool:

@@ -6,7 +6,7 @@ from src.networks import CVAE, GraphCVAE
 from src.data import ConditionDataset, ReactionDataset
 from src.trainer import VAETrainer
 from src.feature import parse_feature
-from src.utils import squared_error, cosin_similarity, cyclical_kld_annealing
+from src.utils import squared_error, cosin_similarity, linear_kld_annealing
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -23,16 +23,22 @@ parser.add_argument('--latent_dim', default=16, type=int)
 parser.add_argument('--batch_size', default=256, type=int)
 parser.add_argument('--graph', default='conv', type=str)
 parser.add_argument('--epochs', default=5000, type=int)
-parser.add_argument('--early_stop', default=100, type=int)
+parser.add_argument('--early_stop', default=200, type=int)
 parser.add_argument('--logging_interval', default=5, type=int)
 parser.add_argument('--target_feature_type', default='active_composit', type=str)
+parser.add_argument('--logging', action='store_true')
 
 args = parser.parse_args()
 
 torch.set_float32_matmul_precision('high')
 
 def main(args):
-    identifier = '{:s}_{:s}_batch_{:04d}_mdim_{:02d}_{:03d}_{:1d}'.format(
+    if args.graph.lower().startswith('att'):
+        args.graph = 'attention'
+    elif args.graph.lower().startswith('conv'):
+        args.graph = 'convolution'
+
+    identifier = 'reg/{:s}_{:s}_batch_{:04d}_mdim_{:02d}_{:03d}_{:1d}'.format(
         args.graph, args.target_feature_type, args.batch_size, 
         args.latent_dim, args.hidden_dim, args.hidden_layers, 
     )
@@ -45,6 +51,9 @@ def main(args):
         output_path += f'_case_{i:02d}'
     os.makedirs(output_path, exist_ok=True)
     writer = SummaryWriter(output_path)
+    if args.logging:
+        print(args)
+        print(output_path)
 
     DS = ReactionDataset(target_feat_type=args.target_feature_type,
                          precursor_feat_type='active_composit')
@@ -71,8 +80,8 @@ def main(args):
                       decoder_hidden_layers = args.hidden_layers,
     )
 
-    trainer = VAETrainer(model, 1e-4, device='cuda')
-    betaset = cyclical_kld_annealing(args.epochs, n_cycle=4, stop=0.1)
+    trainer = VAETrainer(model, 1e-3, device='cuda')
+    betaset = linear_kld_annealing(args.epochs, period=500)
     best_loss = 1e5
     count = 0
     
@@ -82,40 +91,26 @@ def main(args):
 
         if epoch % args.logging_interval == 0:
             valid_loss, valid_output = trainer.test(valid_dl, beta=beta)
-            v_t = parse_feature(valid_output['input'])
-            v_p = parse_feature(valid_output['pred'])
-            v_acc = accuracy_score(v_t, v_p)
-            v_f1 = f1_score(v_t, v_p, average='micro')
-            v_mse = squared_error(valid_output['input'], valid_output['pred'])
-            v_csim = cosin_similarity(valid_output['input'], valid_output['pred'])
-            writer.add_scalar('Loss/Valid', valid_loss, epoch)
-            writer.add_scalar('KLD/Valid', valid_output['kld'].sum(), epoch)
-            writer.add_scalar('ACC/Valid', v_acc, epoch)
-            writer.add_scalar('F1/Valid', v_f1, epoch)
-            writer.add_scalar('MSE/Valid', v_mse, epoch)
-            writer.add_scalar('CSIM/Valid', v_csim, epoch)
-    
             test_loss, test_output = trainer.test(test_dl, beta=beta)
-            t_t = parse_feature(test_output['input'])
-            t_p = parse_feature(test_output['pred'])
-            t_acc = accuracy_score(t_t, t_p)
-            t_f1 = f1_score(t_t, t_p, average='micro')
-            t_mse = squared_error(test_output['input'], test_output['pred'])
-            t_csim = cosin_similarity(test_output['input'], test_output['pred'])
-            writer.add_scalar('Loss/Test', test_loss, epoch)
-            writer.add_scalar('KLD/Test', test_output['kld'].sum(), epoch)
-            writer.add_scalar('ACC/Test', t_acc, epoch)
-            writer.add_scalar('F1/Test', t_f1, epoch)
-            writer.add_scalar('MSE/Test', t_mse, epoch)
-            writer.add_scalar('CSIM/Test', t_csim, epoch)
+            for sfx, loss, output in zip(['Valid','Test'], [valid_loss, test_loss], [valid_output, test_output]):
+                pred_label = parse_feature(output['pred'])
+                acc = accuracy_score(output['label'], pred_label)
+                f1_mi = f1_score(output['label'], pred_label, average='micro')
+                f1_ma = f1_score(output['label'], pred_label, average='macro')
+                mse = squared_error(output['input'], output['pred'])
+                csim = cosin_similarity(output['input'], output['pred'])
+                writer.add_scalar(f'Loss/{sfx}', loss, epoch)
+                writer.add_scalar(f'KLD/{sfx}', output['kld'].sum(), epoch)
+                writer.add_scalar(f'ACC/{sfx}', acc, epoch)
+                writer.add_scalar(f'F1-micro/{sfx}', f1_mi, epoch)
+                writer.add_scalar(f'F1-macro/{sfx}', f1_ma, epoch)
+                writer.add_scalar(f'MSE/{sfx}', mse, epoch)
+                writer.add_scalar(f'CSIM/{sfx}', csim, epoch)
 
-            if epoch % (args.logging_interval * 20) == 0:
-                writer.add_histogram('Z/Valid', valid_output['z'], epoch)
-                writer.add_histogram('Mu/Valid', valid_output['latent'][:,0], epoch)
-                writer.add_histogram('logVar/Valid', valid_output['latent'][:,1], epoch)
-                writer.add_histogram('Z/Test', test_output['z'], epoch)
-                writer.add_histogram('Mu/Test', test_output['latent'][:,0], epoch)
-                writer.add_histogram('logVar/Test', test_output['latent'][:,1], epoch)
+                if epoch % (args.logging_interval * 10) == 0:
+                    writer.add_histogram(f'Z/{sfx}', output['z'], epoch)
+                    writer.add_histogram(f'Mu/{sfx}', output['mu'], epoch)
+                    writer.add_histogram(f'Var/{sfx}', output['var'], epoch)
 
             if valid_loss < best_loss:
                 count = 0
@@ -132,11 +127,12 @@ def main(args):
                 count += args.logging_interval
                 if args.early_stop > 0 and count > args.early_stop:
                     return
+                
+            if args.logging:
+                print('{:5d} | {:8.4f} | {:8.4f} {:10.6f} | {:8.4f} {:10.6f}'.format(
+                    epoch, train_loss, 
+                    valid_loss, valid_output['kld'].sum(), 
+                    test_loss, test_output['kld'].sum()))
 
 if __name__ == '__main__':
-    import time
-    t1 = time.time()
-
     main(args)
-    
-    print('{:10.2f} min - {}'.format((time.time() - t1) / 60.0, args))

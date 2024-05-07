@@ -165,4 +165,4 @@ def check_blacklist(comp):
     else:
         return False
     
-init_info(20)
+init_info(5)

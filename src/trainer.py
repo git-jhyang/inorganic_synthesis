@@ -93,6 +93,7 @@ class VAETrainer(BaseTrainer):
     def _eval_batch(self, batch, compute_loss=True, beta=0.1):
         feat, _ = batch
         pred, kld, l, z = self.model(**feat)
+        pred = torch.nn.Hardsigmoid()(pred)
         mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
         output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), mu.numpy(), log_var.exp().numpy(), z.detach().cpu().numpy()]
         if compute_loss:
@@ -138,7 +139,7 @@ class VAETrainer(BaseTrainer):
             for batch in dataloader:
                 for feat, info in zip(*batch):
                     pred = self.model.sampling(n_samples, **feat)
-                    self._parse_output([None, info], [pred.cpu().numpy()[np.newaxis, ...], *np.zeros((4,1,1))])
+                    self._parse_output([None, info], [pred.cpu().numpy(), *np.zeros((4,1,1))])
         return self._output
 
 class VAEClassTrainer(VAETrainer):

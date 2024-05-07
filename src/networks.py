@@ -230,6 +230,7 @@ class AutoEncoder(BaseNetwork):
     def __init__(self,
                  input_dim:int, 
                  latent_dim:int, 
+                 output_dim:int=None,
                  encoder_hidden_dim:int = 32,
                  encoder_hidden_layers:int = 2,
                  decoder_hidden_dim:int = 32,
@@ -240,6 +241,7 @@ class AutoEncoder(BaseNetwork):
                  **kwargs): 
         super().__init__(input_dim = input_dim,
                          latent_dim = latent_dim,
+                         output_dim = output_dim,
                          encoder_hidden_dim = encoder_hidden_dim,
                          encoder_hidden_layers = encoder_hidden_layers,
                          decoder_hidden_dim = decoder_hidden_dim,
@@ -256,7 +258,7 @@ class AutoEncoder(BaseNetwork):
                                  dropout = dropout, 
                                  activation = activation)
         self.decoder = FCNNBlock(input_dim = latent_dim, 
-                                 output_dim = input_dim, 
+                                 output_dim = output_dim if isinstance(output_dim, int) else input_dim, 
                                  hidden_dim = decoder_hidden_dim, 
                                  hidden_layers = decoder_hidden_layers, 
                                  batch_norm = batch_norm, 
@@ -289,6 +291,7 @@ class VAE(AutoEncoder):
     def __init__(self,
                  input_dim:int, 
                  latent_dim:int, 
+                 output_dim:int=None,
                  encoder_hidden_dim:int = 32,
                  encoder_hidden_layers:int = 2,
                  decoder_hidden_dim:int = 32,
@@ -299,6 +302,7 @@ class VAE(AutoEncoder):
                  **kwargs): 
         super(AutoEncoder, self).__init__(input_dim = input_dim,
                                           latent_dim = latent_dim,
+                                          output_dim = output_dim,
                                           encoder_hidden_dim = encoder_hidden_dim,
                                           encoder_hidden_layers = encoder_hidden_layers,
                                           decoder_hidden_dim = decoder_hidden_dim,
@@ -316,7 +320,7 @@ class VAE(AutoEncoder):
                                  activation = activation)
         
         self.decoder = FCNNBlock(input_dim = latent_dim, 
-                                 output_dim = input_dim, 
+                                 output_dim = output_dim if isinstance(output_dim, int) else input_dim, 
                                  hidden_dim = decoder_hidden_dim, 
                                  hidden_layers = decoder_hidden_layers, 
                                  batch_norm = batch_norm, 
@@ -333,18 +337,19 @@ class VAE(AutoEncoder):
         l = self.encoder(x)
         z, kld = self.reparameterization(l)
         y = self.decoder(z)
-        return torch.nn.Hardsigmoid()(y), kld, l, z
+        return y, kld, l, z
     
     def sampling(self, n, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
         y = self.decoder(z)
-        return torch.nn.Hardsigmoid()(y)
+        return y
 
 class CVAE(VAE):
     def __init__(self,
                  input_dim:int, 
                  latent_dim:int, 
                  condition_dim:int,
+                 output_dim:int=None,
                  encoder_hidden_dim:int = 32,
                  encoder_hidden_layers:int = 2,
                  decoder_hidden_dim:int = 32,
@@ -356,6 +361,7 @@ class CVAE(VAE):
         super(AutoEncoder, self).__init__(input_dim = input_dim,
                                           latent_dim = latent_dim,
                                           condition_dim = condition_dim,
+                                          output_dim = output_dim,                                          
                                           encoder_hidden_dim = encoder_hidden_dim,
                                           encoder_hidden_layers = encoder_hidden_layers,
                                           decoder_hidden_dim = decoder_hidden_dim,
@@ -373,7 +379,7 @@ class CVAE(VAE):
                                  activation = activation)
         
         self.decoder = FCNNBlock(input_dim = latent_dim + condition_dim, 
-                                 output_dim = input_dim, 
+                                 output_dim = output_dim if isinstance(output_dim, int) else input_dim,                                  
                                  hidden_dim = decoder_hidden_dim, 
                                  hidden_layers = decoder_hidden_layers, 
                                  batch_norm = batch_norm, 
@@ -384,57 +390,20 @@ class CVAE(VAE):
         l = self.encoder(x)
         z, kld = self.reparameterization(l)
         y = self.decoder(torch.concat([z, condition], -1))
-        return torch.nn.Hardsigmoid()(y), kld, l, z
+        return y, kld, l, z
     
     def sampling(self, n, condition, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
         y = self.decoder(torch.concat([z, condition.repeat((n, 1)) ], -1))
-        return torch.nn.Hardsigmoid()(y)
+        return y
 
-class ClassCVAE(CVAE):
-    def __init__(self,
-                 input_dim:int, 
-                 latent_dim:int, 
-                 condition_dim:int,
-                 vocab_dim:int,
-                 encoder_hidden_dim:int = 32,
-                 encoder_hidden_layers:int = 2,
-                 decoder_hidden_dim:int = 32,
-                 decoder_hidden_layers:int = 2,
-                 batch_norm:bool = True, 
-                 dropout:float = 0,
-                 activation:str = 'LeakyReLU',
-                 **kwargs):
-        super().__init__(input_dim = input_dim,
-                         latent_dim = latent_dim,
-                         condition_dim = condition_dim,
-                         vocab_dim = vocab_dim,
-                         encoder_hidden_dim = encoder_hidden_dim,
-                         encoder_hidden_layers = encoder_hidden_layers,
-                         decoder_hidden_dim = decoder_hidden_dim,
-                         decoder_hidden_layers = decoder_hidden_layers,
-                         batch_norm = batch_norm,
-                         dropout = dropout,
-                         activation = activation)
-
-        self.inverse_embedding = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, vocab_dim),
-            torch.nn.Softmax(1),
-        )
-
-    def forward(self, x, condition, *args, **kwargs):
-        l = self.encoder(x)
-        z, kld = self.reparameterization(l)
-        h = self.decoder(torch.concat([z, condition], -1))
-        y = self.inverse_embedding(h)
-        return y, kld, l, z
-        
 class GraphCVAE(VAE):
     def __init__(self,
                  input_dim:int, 
                  latent_dim:int, 
                  condition_dim:int,
                  edge_dim:int,
+                 output_dim:int=None,
                  graph:str='conv',
                  aggr:str='mean',
                  heads:int = 8,
@@ -451,8 +420,9 @@ class GraphCVAE(VAE):
         if graph.lower().startswith('conv'):
             super(AutoEncoder, self).__init__(input_dim = input_dim,
                                               latent_dim = latent_dim,
+                                              output_dim = output_dim,
                                               edge_dim = edge_dim,
-                                              graph = graph,
+                                              graph = 'convolution',
                                               condition_dim = condition_dim,
                                               encoder_hidden_dim = encoder_hidden_dim,
                                               encoder_hidden_layers = encoder_hidden_layers,
@@ -462,27 +432,13 @@ class GraphCVAE(VAE):
                                               aggr = aggr,
                                               activation = activation)
 
-            self.encoder = GraphConvolutionBlock(input_dim=input_dim,
-                                                 edge_dim=edge_dim,
-                                                 output_dim=latent_dim * 2,
-                                                 hidden_dim=encoder_hidden_dim,
-                                                 hidden_layers=encoder_hidden_layers,
-                                                 batch_norm=batch_norm,
-                                                 activation=activation)
-            
-            self.decoder = GraphConvolutionBlock(input_dim=latent_dim + condition_dim,
-                                                 edge_dim=edge_dim,
-                                                 output_dim=input_dim,
-                                                 hidden_dim=encoder_hidden_dim,
-                                                 hidden_layers=encoder_hidden_layers,
-                                                 batch_norm=batch_norm,
-                                                 activation=activation)
-
-        elif graph.lower().startswith('att'):
+            BLOCK = GraphConvolutionBlock
+        elif graph.lower().startswith('atte'):
             super(AutoEncoder, self).__init__(input_dim = input_dim,
                                               latent_dim = latent_dim,
+                                              output_dim = output_dim,
                                               edge_dim = edge_dim,
-                                              graph = graph,
+                                              graph = 'attention',
                                               condition_dim = condition_dim,
                                               encoder_hidden_dim = encoder_hidden_dim,
                                               encoder_hidden_layers = encoder_hidden_layers,
@@ -492,79 +448,49 @@ class GraphCVAE(VAE):
                                               dropout = dropout,
                                               negative_slope = negative_slope,
                                               activation = activation)
-
-            self.encoder = GraphAttentionBlock(input_dim=input_dim,
-                                               edge_dim=edge_dim,
-                                               output_dim=latent_dim * 2,
-                                               hidden_dim=encoder_hidden_dim,
-                                               hidden_layers=encoder_hidden_layers,
-                                               heads=heads,
-                                               negative_slope=negative_slope,
-                                               dropout=dropout,
-                                               activation=activation)
-            
-            self.decoder = GraphAttentionBlock(input_dim=latent_dim + condition_dim,
-                                               edge_dim=edge_dim,
-                                               output_dim=input_dim,
-                                               hidden_dim=encoder_hidden_dim,
-                                               hidden_layers=encoder_hidden_layers,
-                                               heads=heads,
-                                               negative_slope=negative_slope,
-                                               dropout=dropout,
-                                               activation=activation)
+            BLOCK = GraphAttentionBlock
         else:
             raise SyntaxError(f'`{graph}` is not supported graph type')
-    
+        
+        self.encoder = BLOCK(input_dim=input_dim,
+                             edge_dim=edge_dim,
+                             output_dim=latent_dim * 2,
+                             hidden_dim=encoder_hidden_dim,
+                             hidden_layers=encoder_hidden_layers,
+                             batch_norm=batch_norm,
+                             heads=heads,
+                             negative_slope=negative_slope,
+                             dropout=dropout,
+                             activation=activation)
+         
+        self.decoder = BLOCK(input_dim=latent_dim + condition_dim,
+                             edge_dim=edge_dim,
+                             output_dim = output_dim if isinstance(output_dim, int) else input_dim,                              
+                             hidden_dim=encoder_hidden_dim,
+                             hidden_layers=encoder_hidden_layers,
+                             batch_norm=batch_norm,
+                             heads=heads,
+                             negative_slope=negative_slope,
+                             dropout=dropout,
+                             activation=activation)
+
     def forward(self, x, edge_index, edge_attr, condition, *args, **kwargs):
-        l = self.encoder(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        l = self.encoder(x = x, 
+                         edge_index = edge_index, 
+                         edge_attr = edge_attr)
+        
         z, kld = self.reparameterization(l)
-        y = self.decoder(x=torch.concat([z, condition], -1), edge_index=edge_index, edge_attr=edge_attr)
-        return torch.nn.Hardsigmoid()(y), kld, l, z
-    
-class GraphClassCVAE(GraphCVAE):
-    def __init__(self, 
-                 input_dim:int, 
-                 latent_dim:int, 
-                 vocab_dim:int,
-                 condition_dim:int,
-                 edge_dim:int,
-                 graph:str='conv',
-                 aggr:str='mean',
-                 heads:int = 12,
-                 negative_slope:float=0.1,
-                 encoder_hidden_dim:int = 64,
-                 encoder_hidden_layers:int = 4,
-                 decoder_hidden_dim:int = 64,
-                 decoder_hidden_layers:int = 4,
-                 batch_norm:bool = True, 
-                 dropout:float = 0.4,
-                 activation:str = 'LeakyReLU',
-                 **kwargs): 
-        super().__init__(input_dim = input_dim,
-                         latent_dim = latent_dim,
-                         condition_dim = condition_dim,
-                         vocab_dim = vocab_dim,
-                         edge_dim = edge_dim,
-                         graph = graph,
-                         aggr = aggr,
-                         heads = heads,
-                         negative_slope = negative_slope,
-                         encoder_hidden_dim = encoder_hidden_dim,
-                         encoder_hidden_layers = encoder_hidden_layers,
-                         decoder_hidden_dim = decoder_hidden_dim,
-                         decoder_hidden_layers = decoder_hidden_layers,
-                         batch_norm = batch_norm,
-                         dropout = dropout,
-                         activation = activation,
-                )
-        self.inverse_embedding = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, vocab_dim),
-            torch.nn.Softmax(1),
-        )
-    
-    def forward(self, x, edge_index, edge_attr, condition, *args, **kwargs):
-        l = self.encoder(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        z, kld = self.reparameterization(l)
-        h = self.decoder(x=torch.concat([z, condition], -1), edge_index=edge_index, edge_attr=edge_attr)
-        y = self.inverse_embedding(h)
+
+        y = self.decoder(x = torch.concat([z, condition], -1), 
+                         edge_index = edge_index, 
+                         edge_attr = edge_attr)
         return y, kld, l, z
+
+    def sampling(self, n, edge_index, edge_attr, condition, *args, **kwargs):
+        y = []
+        for _ in range(n):
+            z = torch.randn(condition.shape[0], self._model_param['latent_dim']).to(self.device)
+            y.append(self.decoder(x = torch.concat([z, condition], -1),
+                                  edge_index = edge_index,
+                                  edge_attr = edge_attr))
+        return 

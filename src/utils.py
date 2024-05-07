@@ -57,7 +57,7 @@ def find_nearest(vectors, reference):
         out.append([i, sser[i], csim[i]])
     return np.array(out).T
 
-def cyclical_kld_annealing(epochs, start=0, stop=1, n_cycle=4, ratio=0.5):
+def linear_kld_annealing(epochs, start=0, stop=1, period=500, ratio=0.5):
     '''
     Code from paper 'Cyclical Annealing Schedule: A Simple Approach to Mitigating KL Vanishing'
     arXiv: https://arxiv.org/abs/1903.10145
@@ -66,11 +66,25 @@ def cyclical_kld_annealing(epochs, start=0, stop=1, n_cycle=4, ratio=0.5):
     Scheduling KLD for better training of VAE.
     '''
     beta = np.ones(epochs)
-    period = epochs / n_cycle
-    step = (stop - start) / (period * ratio)
+    step = (stop - start) / (period * np.clip(ratio, 0, 1))
     for i in range(int(period)):
         beta[i::int(period)] = start + step * i
     return np.clip(beta, start, stop)
+
+def exponential_kld_annealing(epochs, start=-35, stop=0, period=500, ratio=0.5):
+    '''
+    Code from paper 'Cyclical Annealing Schedule: A Simple Approach to Mitigating KL Vanishing'
+    arXiv: https://arxiv.org/abs/1903.10145
+    github: https://github.com/haofuml/cyclical_annealing
+
+    Scheduling KLD for better training of VAE.
+    '''
+    beta = np.ones(epochs)
+    step = (stop - start) / (period * ratio)
+    for i in range(int(period)):
+        beta[i::int(period)] = np.power(10.0, start + step * i)
+    return np.clip(beta, np.power(10.0, start), np.power(10.0, stop))
+
 
 #class StratifiedRandomSampler:
 #    def __init__(self, dataset, class_attr)

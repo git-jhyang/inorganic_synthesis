@@ -48,14 +48,14 @@ def cosin_similarity(mat1, mat2, average=True):
     else:
         return cos_sim
 
-def find_nearest(vectors, reference):
-    out = []
-    for vec in vectors.reshape(-1, reference.shape[-1]):
-        sser = squared_error(vec, reference, average=False)
-        csim = cosin_similarity(vec, reference, average=False)
-        i = np.argmin(sser - csim)
-        out.append([i, sser[i], csim[i]])
-    return np.array(out).T
+# def find_nearest(vectors, reference):
+#     out = []
+#     for vec in vectors.reshape(-1, reference.shape[-1]):
+#         sser = squared_error(vec, reference, average=False)
+#         csim = cosin_similarity(vec, reference, average=False)
+#         i = np.argmin(sser - csim)
+#         out.append([i, sser[i], csim[i]])
+#     return np.array(out).T
 
 def linear_kld_annealing(epochs, start=0, stop=1, period=500, ratio=0.5):
     '''

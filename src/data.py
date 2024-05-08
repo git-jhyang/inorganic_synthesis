@@ -2,7 +2,7 @@ from re import L
 import torch, gzip, pickle
 import numpy as np
 from .utils import MetalElements
-from .feature import check_blacklist, composition_to_feature, parse_composit, blacklist
+from .feature import composition_to_feature, precursor_info
 from typing import Dict, List
 
 class BaseData:
@@ -46,12 +46,17 @@ class BaseData:
         return self.to_dict()
 
 class CompositData(BaseData):
-    def __init__(self, comp:Dict, data:Dict={}, comp_feat_type:str='active_composit', by_fraction=True, **kwargs):
+    def __init__(self, 
+                 comp:Dict, 
+                 data:Dict={}, 
+                 feat_type:str='composit', 
+                 by_fraction=True, 
+                 **kwargs):
         super().__init__(data, **kwargs)
-        self.comp_feat_type = [comp_feat_type, by_fraction]
+        self.feat_type = [feat_type, by_fraction]
         self.comp = comp
-        self.comp_feat = composition_to_feature(comp, feature_type=comp_feat_type, by_fraction=by_fraction)
-        self._info_attrs.extend(['comp', 'comp_feat_type'])
+        self.comp_feat = composition_to_feature(comp, feature_type=feat_type, by_fraction=by_fraction)
+        self._info_attrs.extend(['comp', 'feat_type'])
         self._feature_attrs.append('comp_feat')
         self.to_torch()
 
@@ -59,93 +64,64 @@ class PrecursorData(BaseData):
     def __init__(self, 
                  data:Dict={},
                  target_comp:Dict={},
-                 target_feat_type:str='active_composit',
+                 precursor_comps:List[Dict]=[],
+                 feat_type:str='composit',
                  target_feat_by_fraction:bool=True,
-                 metal_feat_type:str='metal_composit',
                  metal_feat_by_fraction:str=False,
-                 precursor_comp:Dict={},
-                 precursor_feat_type:str='ligand_composit',
-                 precursor_feat_by_fraction:bool=False,
+                 precursor_feat_by_fraction:bool=True,
                  **kwargs):
         super().__init__(data, **kwargs)
-        
-        self.skip = False
-        if isinstance(precursor_comp, Dict) and len(precursor_comp) != 0:
-            if check_blacklist(precursor_comp):
-                self.skip = True
-                return
+        self.feat_type = [feat_type, target_feat_by_fraction, metal_feat_by_fraction, precursor_feat_by_fraction]
+
+        self._info_attrs.extend(['feat_type','target_comp', 'metal_comp'])
+        self._feature_attrs.extend(['target_feat','metal_feat'])
+
+        if isinstance(precursor_comp, List) and len(precursor_comp) != 0:
             self.precursor_comp = precursor_comp
-            self.precursor_feat = composition_to_feature(precursor_comp, feature_type=precursor_feat_type, by_fraction=precursor_feat_by_fraction)
-            self.precursor_feat_type = [precursor_feat_type, precursor_feat_by_fraction]
-            self.precursor_index = np.array(parse_composit(precursor_comp, feature_type=precursor_feat_type)).reshape(-1).astype(int)
+            self.label, self.weight = precursor_info(precursor_comp)
+            self.precursor_feat = composition_to_feature(composit_dict=precursor_comp, 
+                                                         feature_type=feat_type,
+                                                         by_fraction=precursor_feat_by_fraction)            
             metal_comp = {e:f for e,f in precursor_comp.items() if e in MetalElements}
-            self._info_attrs.extend(['precursor_comp', 'precursor_feat_type'])
-            self._feature_attrs.extend(['precursor_feat', 'precursor_index'])
-        
-        self.target_feat = composition_to_feature(target_comp, feature_type=target_feat_type, by_fraction=target_feat_by_fraction)
-        self.metal_feat = composition_to_feature(metal_comp, feature_type=metal_feat_type, by_fraction=metal_feat_by_fraction)
+            self._info_attrs.extend(['precursor_comp'])
+            self._feature_attrs.extend(['precursor_feat', 'label', 'weight'])
+        else:
+            metal_comp = []
+            for ele, frac in target_comp.items():
+                if ele in MetalElements:
+                    metal_comp.append({ele:frac})
+            metal_comp.append({})
+
+        self.target_feat = composition_to_feature(composit_dict=target_comp, 
+                                                  feature_type=feat_type, 
+                                                  by_fraction=target_feat_by_fraction)
+        self.metal_feat = composition_to_feature(composit_dict=metal_comp, 
+                                                 feature_type=feat_type,
+                                                 by_fraction=metal_feat_by_fraction)
 
         self.target_comp = target_comp
-        self.target_feat_type = [target_feat_type, target_feat_by_fraction]
         self.metal_comp = metal_comp
-        self.metal_feat_type = [metal_feat_type, metal_feat_by_fraction]
 
-        self._info_attrs.extend(['target_comp', 'target_feat_type', 'metal_comp', 'metal_feat_type'])
-        self._feature_attrs.extend(['target_feat','metal_feat'])
         self.to_torch()
 
-class ReactionData(BaseData):
+class ReactionData(PrecursorData):
     def __init__(self, 
-                 data:Dict,
-                 target_comp_key='target_comp', 
-                 target_feat_type:str='active_composit',
+                 data:Dict = {},
+                 target_comp:Dict = {},
+                 precursor_comps:List[Dict] = [],
+                 feat_type:str='composit',
                  target_feat_by_fraction:bool=True,
-                 metal_feat_type:str='metal_composit',
                  metal_feat_by_fraction:bool=False,
-                 precursor_comp_key:str='precursor_comp',
-                 precursor_feat_type:str='ligand_composit',
-                 precursor_feat_by_fraction:bool=False,
+                 precursor_feat_by_fraction:bool=True,
                  **kwargs):
-        super().__init__(data, **kwargs)
-        self.target_comp = data[target_comp_key]
-        self.target_feat_type = [target_feat_type, target_feat_by_fraction]
-        target_feat = composition_to_feature(composit_dict = self.target_comp, 
-                                                  feature_type = target_feat_type, 
-                                                  by_fraction = target_feat_by_fraction)
-        
-        self.metal_comp = []
-        self.skip = False
-        if precursor_comp_key and data.get(precursor_comp_key) is not None:
-            precursor_feat = []
-            precursor_index = []
-            self.precursor_comp = data[precursor_comp_key]
-            self.precursor_feat_type = [precursor_feat_type, precursor_feat_by_fraction]
-            for precursor in self.precursor_comp:
-                if check_blacklist(precursor):
-                    self.skip = True
-                    return
-                precursor_feat.append(
-                    composition_to_feature(
-                        composit_dict = precursor, 
-                        feature_type = precursor_feat_type, 
-                        by_fraction = precursor_feat_by_fraction
-                    )
-                )
-                self.metal_comp.append({e:f for e,f in precursor.items() if e in MetalElements})
-                precursor_index.append(parse_composit(precursor, feature_type=precursor_feat_type))
-#            if (np.sum([e not in MetalElements for e in self.target_comp.keys()]) != 0) and ({} not in self.metal_comp):
-#                precursor_feat.append(np.zeros_like(precursor_feat[0]))
-#                self.metal_comp.append({})
-#                precursor_index.append(parse_composit({}, feature_type=precursor_feat_type))
-            self.precursor_feat = np.vstack(precursor_feat)
-            self.precursor_index = np.array(precursor_index).reshape(-1).astype(int)
-            self._info_attrs.extend(['precursor_comp', 'precursor_feat_type'])
-            self._feature_attrs.extend(['precursor_feat', 'precursor_index'])
-        else:
-            for ele, frac in self.target_comp.items():
-                if ele in MetalElements:
-                    self.metal_comp.append({ele:frac})
-            self.metal_comp.append({})
+        super().__init__(data=data, 
+                         target_comp=target_comp, 
+                         precursor_comp=precursor_comp,
+                         feat_type=feat_type,
+                         target_feat_by_fraction=target_feat_by_fraction,
+                         metal_feat_by_fraction=metal_feat_by_fraction,
+                         precursor_feat_by_fraction=precursor_feat_by_fraction,
+                         **kwargs)
 
         self.metal_feat_type = [metal_feat_type, metal_feat_by_fraction]
         self.metal_feat = np.vstack([

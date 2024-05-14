@@ -53,14 +53,15 @@ class CompositData(BaseData):
                  by_fraction=True, 
                  **kwargs):
         super().__init__(data, **kwargs)
+        self._info_attrs.extend(['comp', 'feat_type'])
+        self._feature_attrs.append('feat')
+
         self.feat_type = [feat_type, by_fraction]
         self.comp = comp
-        self.comp_feat = composition_to_feature(comp, feature_type=feat_type, by_fraction=by_fraction)
-        self._info_attrs.extend(['comp', 'feat_type'])
-        self._feature_attrs.append('comp_feat')
+        self.feat = composition_to_feature(comp, feature_type=feat_type, by_fraction=by_fraction)
         self.to_torch()
 
-class PrecursorData(BaseData):
+class ReactionData(BaseData):
     def __init__(self, 
                  data:Dict={},
                  target_comp:Dict={},
@@ -71,73 +72,56 @@ class PrecursorData(BaseData):
                  precursor_feat_by_fraction:bool=True,
                  **kwargs):
         super().__init__(data, **kwargs)
-        self.feat_type = [feat_type, target_feat_by_fraction, metal_feat_by_fraction, precursor_feat_by_fraction]
-
         self._info_attrs.extend(['feat_type','target_comp', 'metal_comp'])
-        self._feature_attrs.extend(['target_feat','metal_feat'])
+        self._feature_attrs.extend(['target_feat','metal_feat','edge_feat','edge_index'])
 
-        if isinstance(precursor_comp, List) and len(precursor_comp) != 0:
-            self.precursor_comp = precursor_comp
-            self.label, self.weight = precursor_info(precursor_comp)
-            self.precursor_feat = composition_to_feature(composit_dict=precursor_comp, 
-                                                         feature_type=feat_type,
-                                                         by_fraction=precursor_feat_by_fraction)            
-            metal_comp = {e:f for e,f in precursor_comp.items() if e in MetalElements}
-            self._info_attrs.extend(['precursor_comp'])
-            self._feature_attrs.extend(['precursor_feat', 'label', 'weight'])
-        else:
-            metal_comp = []
-            for ele, frac in target_comp.items():
-                if ele in MetalElements:
-                    metal_comp.append({ele:frac})
-            metal_comp.append({})
-
+        self.feat_type = [feat_type, target_feat_by_fraction, metal_feat_by_fraction, precursor_feat_by_fraction]
+        self.target_comp = target_comp
+        self.metal_comp = []
         self.target_feat = composition_to_feature(composit_dict=target_comp, 
                                                   feature_type=feat_type, 
                                                   by_fraction=target_feat_by_fraction)
-        self.metal_feat = composition_to_feature(composit_dict=metal_comp, 
-                                                 feature_type=feat_type,
-                                                 by_fraction=metal_feat_by_fraction)
 
-        self.target_comp = target_comp
-        self.metal_comp = metal_comp
+        if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
+            self._info_attrs.extend(['precursor_comp'])
+            self._feature_attrs.extend(['precursor_feat', 'label', 'weight'])
+            
+            self.precursor_comps = precursor_comps
+            precursor_feat = []
+            label = []
+            weight = []
+            for precursor_comp in precursor_comps:
+                label, weight = precursor_info(precursor_comp)
+                precursor_feat.append(composition_to_feature(composit_dict=precursor_comp, 
+                                                             feature_type=feat_type,
+                                                             by_fraction=precursor_feat_by_fraction))
+                self.metal_comp.append({e:f for e,f in precursor_comp.items() if e in MetalElements})
+                label.append(label)
+                weight.append(weight)
+            self.precursor_feat = np.vstack(precursor_feat)
+            self.label = np.array(label).astype(int).reshape(-1,1)
+            self.weight = np.array(weight).astype(np.float32).reshape(-1,1)
+        else:
+            for ele, frac in target_comp.items():
+                if ele in MetalElements:
+                    self.metal_comp.append({ele:frac})
+            self.metal_comp.append({})
 
-        self.to_torch()
-
-class ReactionData(PrecursorData):
-    def __init__(self, 
-                 data:Dict = {},
-                 target_comp:Dict = {},
-                 precursor_comps:List[Dict] = [],
-                 feat_type:str='composit',
-                 target_feat_by_fraction:bool=True,
-                 metal_feat_by_fraction:bool=False,
-                 precursor_feat_by_fraction:bool=True,
-                 **kwargs):
-        super().__init__(data=data, 
-                         target_comp=target_comp, 
-                         precursor_comp=precursor_comp,
-                         feat_type=feat_type,
-                         target_feat_by_fraction=target_feat_by_fraction,
-                         metal_feat_by_fraction=metal_feat_by_fraction,
-                         precursor_feat_by_fraction=precursor_feat_by_fraction,
-                         **kwargs)
-
-        self.metal_feat_type = [metal_feat_type, metal_feat_by_fraction]
         self.metal_feat = np.vstack([
-            composition_to_feature(
-                composit_dict = metal_comp,
-                feature_type = metal_feat_type, 
-                by_fraction = metal_feat_by_fraction
-            ) for metal_comp in self.metal_comp
+            composition_to_feature(composit_dict=metal_comp, 
+                                   feature_type=feat_type,
+                                   by_fraction=metal_feat_by_fraction)
+            for metal_comp in self.metal_comp
         ])
+
+        self._feature_attrs.extend(['edge_feat','edge_index'])
         edge_index = []
         edge_feat = []
         for i, metal_i in enumerate(self.metal_comp):
             for j, metal_j in enumerate(self.metal_comp):
                 edge_index.append([i,j])
                 if i == j:
-                    edge_feat.append(target_feat)
+                    edge_feat.append(self.target_feat)
                 else:
                     edge_comp = {}
                     for e, f in self.target_comp.items():
@@ -149,13 +133,13 @@ class ReactionData(PrecursorData):
                             edge_comp.update({e:f})
                     edge_feat.append(
                         composition_to_feature(composit_dict = edge_comp, 
-                                               feature_type = target_feat_type, 
+                                               feature_type = feat_type, 
                                                by_fraction = target_feat_by_fraction)
                     )
-        self.edge_index = np.array(edge_index).T
-        self.edge_feat = np.vstack(edge_feat)
-        self._info_attrs.extend(['target_comp','target_feat_type','metal_comp', 'metal_feat_type'])
-        self._feature_attrs.extend(['metal_feat','edge_feat','edge_index'])
+        self.edge_index = np.array(edge_index).astype(int).T
+        self.edge_feat = np.vstack(edge_feat).astype(np.float32)
+
+        self.to_torch()
 
 
 

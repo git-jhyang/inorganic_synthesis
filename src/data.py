@@ -1,12 +1,12 @@
 from re import L
 import torch, gzip, pickle
 import numpy as np
-from .utils import MetalElements
-from .feature import composition_to_feature, precursor_info
+from .utils import MetalElements, composit_parser
+from .feature import composition_to_feature
 from typing import Dict, List
 
 class BaseData:
-    def __init__(self, data:Dict={}, info_attrs:List[str] = ['id','raw_id','year']):
+    def __init__(self, data:Dict={}, info_attrs:List[str] = ['id','year']):
         self._info_attrs = info_attrs.copy()
         self._feature_attrs = []
         self.device = None
@@ -24,7 +24,7 @@ class BaseData:
         for attr in self._feature_attrs:
             data = getattr(self, attr)
             if isinstance(data, np.ndarray):
-                setattr(self, attr, torch.from_numpy(data))
+                setattr(self, attr, torch.from_numpy(data))            
         self.device = 'cpu'
     
     def to(self, device='cpu'):
@@ -70,37 +70,38 @@ class ReactionData(BaseData):
                  target_feat_by_fraction:bool=True,
                  metal_feat_by_fraction:str=False,
                  precursor_feat_by_fraction:bool=True,
+                 conditions:List[str]=[],
+                 condition_values:List[float]=[],
+                 labels:int=None,
+                 weights:float=None,
                  **kwargs):
         super().__init__(data, **kwargs)
-        self._info_attrs.extend(['feat_type','target_comp', 'metal_comp'])
-        self._feature_attrs.extend(['target_feat','metal_feat','edge_feat','edge_index'])
 
+        # meta info
+        self._info_attrs.extend(['feat_type', 'target_comp', 'metal_comp'])
+        self._feature_attrs.extend(['target_feat','metal_feat','edge_feat','edge_index'])
         self.feat_type = [feat_type, target_feat_by_fraction, metal_feat_by_fraction, precursor_feat_by_fraction]
+
+        # target
         self.target_comp = target_comp
-        self.metal_comp = []
         self.target_feat = composition_to_feature(composit_dict=target_comp, 
                                                   feature_type=feat_type, 
                                                   by_fraction=target_feat_by_fraction)
 
+        # metal and precursor
+        self.metal_comp = []
         if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
             self._info_attrs.extend(['precursor_comp'])
             self._feature_attrs.extend(['precursor_feat', 'label', 'weight'])
             
             self.precursor_comps = precursor_comps
             precursor_feat = []
-            label = []
-            weight = []
             for precursor_comp in precursor_comps:
-                label, weight = precursor_info(precursor_comp)
                 precursor_feat.append(composition_to_feature(composit_dict=precursor_comp, 
                                                              feature_type=feat_type,
                                                              by_fraction=precursor_feat_by_fraction))
                 self.metal_comp.append({e:f for e,f in precursor_comp.items() if e in MetalElements})
-                label.append(label)
-                weight.append(weight)
             self.precursor_feat = np.vstack(precursor_feat)
-            self.label = np.array(label).astype(int).reshape(-1,1)
-            self.weight = np.array(weight).astype(np.float32).reshape(-1,1)
         else:
             for ele, frac in target_comp.items():
                 if ele in MetalElements:
@@ -110,10 +111,10 @@ class ReactionData(BaseData):
         self.metal_feat = np.vstack([
             composition_to_feature(composit_dict=metal_comp, 
                                    feature_type=feat_type,
-                                   by_fraction=metal_feat_by_fraction)
-            for metal_comp in self.metal_comp
-        ])
+                                   by_fraction=metal_feat_by_fraction) 
+            for metal_comp in self.metal_comp])
 
+        # graph 
         self._feature_attrs.extend(['edge_feat','edge_index'])
         edge_index = []
         edge_feat = []
@@ -136,15 +137,25 @@ class ReactionData(BaseData):
                                                feature_type = feat_type, 
                                                by_fraction = target_feat_by_fraction)
                     )
-        self.edge_index = np.array(edge_index).astype(int).T
-        self.edge_feat = np.vstack(edge_feat).astype(np.float32)
+        self.edge_index = np.array(edge_index, dtype=int).T
+        self.edge_feat = np.vstack(edge_feat, dtype=np.float32)
+
+        # conditions
+        for attr, value in zip(conditions, condition_values):
+            setattr(self, attr, np.array(value, dtype=np.float32).reshape(1,-1))
+            self._feature_attrs.append(attr)
+
+        # labels and weights
+        if labels is not None:
+            self.labels = np.array(labels, dtype=int).reshape(-1,1)
+        if weights is not None:
+            self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
 
         self.to_torch()
 
-
-
-
-
+################################################################################################
+# Dataset class
+################################################################################################
 
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(self):
@@ -188,15 +199,19 @@ class CompositionDataset(BaseDataset):
         self._comp_feat_type = comp_feat_type
         self._by_fraction = by_fraction
 
-    def from_file(self, data_path='../data/unique_target.pkl.gz', extend_dataset=False):
+    def from_file(self, 
+                  data_path='../data/unique_target.pkl.gz', 
+                  compsition_key='target_comp',
+                  extend_dataset=False):
+
         self.init_dataset(extend_dataset)
         dataset = self.read_file(data_path)
 
         for data in dataset:
             comp_data = CompositData(data=data, 
-                                 comp=data['target_comp'], 
-                                 comp_feat_type=self._comp_feat_type, 
-                                 by_fraction=self._by_fraction)
+                                     comp=data[compsition_key], 
+                                     comp_feat_type=self._comp_feat_type, 
+                                     by_fraction=self._by_fraction)
             self._data.append(comp_data)
         self._year = np.array([d.year for d in self._data])
         self.to_torch()
@@ -210,33 +225,28 @@ class CompositionDataset(BaseDataset):
             info.append(data.to_dict())
         return torch.vstack(feat), info
 
-class ConditionDataset(BaseDataset):
+class NNN(BaseDataset):
     def __init__(self, 
-                 target_feat_type:str='active_composit',
+                 feat_type:str='active_composit',
                  target_feat_by_fraction:bool=True,
-                 metal_feat_type:str='metal_composit',
                  metal_feat_by_fraction:bool=False,
-                 precursor_feat_type:str='ligand_composit',
                  precursor_feat_by_fraction:bool=False,
-                 train_data:bool=True,
+                 train:bool=True,
                  ):
         
         super().__init__()
 
-        self._target_feat_type = target_feat_type
+        self._feat_type = feat_type
         self._target_feat_by_fraction = target_feat_by_fraction
-        self._metal_feat_type = metal_feat_type
         self._metal_feat_by_fraction = metal_feat_by_fraction
-        self._precursor_feat_type = precursor_feat_type
         self._precursor_feat_by_fraction = precursor_feat_by_fraction
         
-        self._train_data = train_data
+        self._train = train
 
         dump = self.from_precursor({'Li':1}, {'Li':1})
         self.num_metal_feat = dump.metal_feat.shape[-1]
         self.num_target_feat = dump.target_feat.shape[-1]
         self.num_precursor_feat = dump.precursor_feat.shape[-1]
-        self.num_class = parse_composit({}, feature_type=precursor_feat_type) + 1
 
     def from_file(self, data_path='../data/unique_reaction.pkl.gz', extend_dataset=False, 
                   target_comp_key='target_comp', precursor_comp_key='precursor_comp', **kwargs):
@@ -332,25 +342,21 @@ class ConditionDataset(BaseDataset):
     
 class ReactionDataset(BaseDataset):
     def __init__(self, 
-                 target_feat_type:str='active_composit',
+                 feat_type:str='active_composit',
                  target_feat_by_fraction:bool=True,
-                 metal_feat_type:str='metal_composit',
                  metal_feat_by_fraction:bool=False,
-                 precursor_feat_type:str='ligand_composit',
                  precursor_feat_by_fraction:bool=False,
-                 train_data:bool=True,
+                 train:bool=True,
                  ):
         
         super().__init__()
         
-        self._target_feat_type = target_feat_type
+        self._feat_type = feat_type
         self._target_feat_by_fraction = target_feat_by_fraction
-        self._metal_feat_type = metal_feat_type
         self._metal_feat_by_fraction = metal_feat_by_fraction
-        self._precursor_feat_type = precursor_feat_type
         self._precursor_feat_by_fraction = precursor_feat_by_fraction
         
-        self._train_data = train_data
+        self._train_data = train
 
         dump = self.from_data(data={'dump_tgt':{'Li':1}, 'dump_prec':[{'Li':1}]},
                               target_comp_key = 'dump_tgt', 
@@ -359,7 +365,7 @@ class ReactionDataset(BaseDataset):
         self.num_metal_feat = dump.metal_feat.shape[-1]
         self.num_target_feat = dump.edge_feat.shape[-1]
         self.num_precursor_feat = dump.precursor_feat.shape[-1]
-        self.num_class = parse_composit({}, feature_type=precursor_feat_type) + 1
+        self.num_class = None
 
     def from_file(self, data_path='../data/unique_reaction.pkl.gz', extend_dataset=False, 
                   target_comp_key='target_comp', precursor_comp_key='precursor_comp', **kwargs):

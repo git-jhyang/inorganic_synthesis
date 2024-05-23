@@ -1,6 +1,6 @@
-from .utils import ActiveElements, MetalElements, LigandElements, NEAR_ZERO, Element
+from .utils import ActiveElements, NEAR_ZERO
 import numpy as np
-import json, os, gzip, pickle
+import json, os
 
 ATOM_EXCEPTION_WARNING = 'Warning: element [{}] is not included in feature type "{}"\n'
 FEAT_EXCEPTION_WARNING = 'Warning: feature type [{}] is not supported. '
@@ -10,16 +10,6 @@ for k in ['cgcnn','elemnet','magpie','magpie_sc','mat2vec','matscholar','megnet1
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'elmd', f'{k}.json')) as f:
         elmd_data = json.load(f)
     elmd[k] = elmd_data
-
-composit_parser = lambda x: ' '.join([f'{k}_{v:.5f}' for k,v in x.items()])
-
-with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_unique_precursor.pkl.gz'),'rb') as f:
-    screened_precursor = pickle.load(f)
-
-precursor_list = {}
-for i, prec in enumerate(sorted(screened_precursor, key=lambda x: x['count'], reverse=True)):    
-    pstr = composit_parser[prec['precursor_comp']]
-    precursor_list[pstr] = i, 1. / np.sqrt(prec['count']) # index and weight
 
 def composition_to_feature(composit_dict, 
                            feature_type='composit', 
@@ -119,9 +109,6 @@ def active_composit_feature(composit_dict, dtype=float, by_fraction=True, *args,
 #         return chrs[out]
 #     else:
 #         return out
-
-def precursor_info(comp):
-    return precursor_list[composit_parser(comp)]
 
 # def check_blacklist(comp):
 #     key = tuple(k for k in sorted(comp.keys(), key=lambda x: Element(x).number))

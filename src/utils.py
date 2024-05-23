@@ -85,6 +85,43 @@ def exponential_kld_annealing(epochs, start=-35, stop=0, period=500, ratio=0.5):
         beta[i::int(period)] = np.power(10.0, start + step * i)
     return np.clip(beta, np.power(10.0, start), np.power(10.0, stop))
 
+def composit_parser(composit, fmt='{:.5f}'):
+    if isinstance(composit, list):
+        _comp = {}
+        for comp in composit:
+            for k, v in comp.items():
+                if k in _comp:
+                    _comp[k] += v
+                else:
+                    _comp[k] = v
+    else:
+        _comp = composit.copy()
+    comp_str = []
+    for k, v in sorted(_comp.items(), key=lambda x: Element(x[0]).number):
+        comp_str.append(f'{k}_' + fmt.format(v))
+    return ' '.join(comp_str)
+
+def check_precursor_frequency(dataset, comp_key='precursor_comp'):
+    prec_idx = {}
+    prec_data = []
+    for rxn in dataset:
+        for prec_comp in rxn[comp_key]:
+            pstr = composit_parser(prec_comp)
+            if pstr not in prec_idx.keys():
+                i = len(prec_data)
+                prec_idx[pstr] = len(prec_data)
+                prec_data.append({
+                    'count_reaction': 1,
+                    'count_target':rxn['count'],
+                    'precursor_comp':prec_comp,
+                    'pstr':pstr,
+                })
+            else:
+                i = prec_idx[pstr]
+                prec_data[i]['count_reaction'] += 1
+                prec_data[i]['count_target'] += rxn['count']
+    prec_data = sorted(prec_data, key=lambda x: x['count_target'], reverse=True)
+    return prec_data
 
 #class StratifiedRandomSampler:
 #    def __init__(self, dataset, class_attr)

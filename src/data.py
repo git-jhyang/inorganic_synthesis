@@ -1,8 +1,8 @@
 from re import L
 import torch, gzip, pickle
 import numpy as np
-from .utils import MetalElements, composit_parser
-from .feature import composition_to_feature
+from .utils import MetalElements
+from .feature import composition_to_feature, get_precursor_info, num_labels
 from typing import Dict, List
 
 class BaseData:
@@ -64,9 +64,9 @@ class CompositData(BaseData):
 class ReactionData(BaseData):
     def __init__(self, 
                  data:Dict={},
+                 feat_type:str='composit',
                  target_comp:Dict={},
                  precursor_comps:List[Dict]=[],
-                 feat_type:str='composit',
                  target_feat_by_fraction:bool=True,
                  metal_feat_by_fraction:str=False,
                  precursor_feat_by_fraction:bool=True,
@@ -148,13 +148,17 @@ class ReactionData(BaseData):
         # labels and weights
         if labels is not None:
             self.labels = np.array(labels, dtype=int).reshape(-1,1)
+            self._feature_attrs.append('labels')
         if weights is not None:
             self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
+            self._feature_attrs.append('weights')
 
         self.to_torch()
 
 ################################################################################################
+#
 # Dataset class
+#
 ################################################################################################
 
 class BaseDataset(torch.utils.data.Dataset):
@@ -224,121 +228,6 @@ class CompositionDataset(BaseDataset):
             feat.append(data.comp_feat)
             info.append(data.to_dict())
         return torch.vstack(feat), info
-
-class NNN(BaseDataset):
-    def __init__(self, 
-                 feat_type:str='active_composit',
-                 target_feat_by_fraction:bool=True,
-                 metal_feat_by_fraction:bool=False,
-                 precursor_feat_by_fraction:bool=False,
-                 train:bool=True,
-                 ):
-        
-        super().__init__()
-
-        self._feat_type = feat_type
-        self._target_feat_by_fraction = target_feat_by_fraction
-        self._metal_feat_by_fraction = metal_feat_by_fraction
-        self._precursor_feat_by_fraction = precursor_feat_by_fraction
-        
-        self._train = train
-
-        dump = self.from_precursor({'Li':1}, {'Li':1})
-        self.num_metal_feat = dump.metal_feat.shape[-1]
-        self.num_target_feat = dump.target_feat.shape[-1]
-        self.num_precursor_feat = dump.precursor_feat.shape[-1]
-
-    def from_file(self, data_path='../data/unique_reaction.pkl.gz', extend_dataset=False, 
-                  target_comp_key='target_comp', precursor_comp_key='precursor_comp', **kwargs):
-        
-        dataset = self.read_file(data_path)
-        self.from_dataset(dataset, extend_dataset=extend_dataset, 
-                          target_comp_key=target_comp_key, 
-                          precursor_comp_key=precursor_comp_key,
-                          **kwargs)
-    
-    def from_dataset(self, dataset:List[Dict], extend_dataset=False, 
-                     target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
-                     info_attrs=['id','raw_id','year'], **kwargs):
-        self.init_dataset(extend_dataset)
-        for data in dataset:
-            self.from_reaction(
-                target_comp = data[target_comp_key], 
-                precursor_comps= None if precursor_comp_key is None else data[precursor_comp_key],
-                extend_dataset = True, data = data, info_attrs=info_attrs, **kwargs
-            )
-
-    def from_reaction(self, target_comp:Dict, precursor_comps:List[Dict]=None, extend_dataset=False, data={}, info_attrs=[], **kwargs):
-        self.init_dataset(extend_dataset)
-        if precursor_comps is None:
-            for ele, frac in target_comp.items():
-                if ele not in MetalElements:
-                    continue
-                self._data.append(self.from_metal(metal_comp={ele:frac}, target_comp=target_comp, data=data, info_attrs=info_attrs, **kwargs))
-            self._data.append(self.from_metal(metal_comp={}, target_comp=target_comp, data=data, info_attrs=info_attrs, **kwargs))
-        else:
-            _data = []
-            for precursor_comp in precursor_comps:
-                _data.append(self.from_precursor(precursor_comp=precursor_comp, target_comp=target_comp, data=data, info_attrs=info_attrs, **kwargs))
-                if _data[-1].skip:
-                    return
-            self._data.extend(_data)
-
-    def from_precursor(self, precursor_comp:Dict, target_comp:Dict, data={}, info_attrs=[], **kwargs):
-        return PrecursorData(
-                data=data,
-                target_comp = target_comp,
-                precursor_comp = precursor_comp, 
-                precursor_feat_type = self._precursor_feat_type,
-                precursor_feat_by_fraction = self._precursor_feat_by_fraction,
-                target_feat_type = self._target_feat_type,
-                target_feat_by_fraction = self._target_feat_by_fraction,
-                metal_feat_type = self._metal_feat_type,
-                metal_feat_by_fraction = self._metal_feat_by_fraction,
-                info_attrs=info_attrs,
-                **kwargs
-            )
-
-    def from_metal(self, metal_comp:Dict, target_comp:Dict, data={}, info_attrs=[], **kwargs):
-        return PrecursorData(
-                data=data,
-                target_comp = target_comp,
-                metal_comp = metal_comp, 
-                target_feat_type = self._target_feat_type,
-                target_feat_by_fraction = self._target_feat_by_fraction,
-                metal_feat_type = self._metal_feat_type,
-                metal_feat_by_fraction = self._metal_feat_by_fraction,
-                info_attrs=info_attrs,
-                **kwargs
-            )
-
-    def cfn(self, dataset):
-        info = []
-        metal_feat = []
-        target_feat = []
-        for data in dataset:
-            metal_feat.append(data.metal_feat)
-            target_feat.append(data.target_feat)
-            info.append(data.to_dict())
-
-        metal_feat = torch.concat(metal_feat)
-        target_feat = torch.concat(target_feat)
-        
-        precursor_feat = []
-        precursor_index = []
-        if self._train_data:
-            for data in dataset:
-                precursor_feat.append(data.precursor_feat)
-                precursor_index.append(data.precursor_index)
-            precursor_feat = torch.concat(precursor_feat)
-            precursor_index = torch.concat(precursor_index)
-
-        feat = {
-            'x':precursor_feat, 
-            'label':precursor_index,
-            'condition':torch.concat([metal_feat, target_feat], -1)
-        }
-        return feat, info
     
 class ReactionDataset(BaseDataset):
     def __init__(self, 
@@ -362,10 +251,10 @@ class ReactionDataset(BaseDataset):
                               target_comp_key = 'dump_tgt', 
                               precursor_comp_key = 'dump_prec',
                               info_attrs = [])
-        self.num_metal_feat = dump.metal_feat.shape[-1]
+        self.num_feat = dump.metal_feat.shape[-1]
         self.num_target_feat = dump.edge_feat.shape[-1]
         self.num_precursor_feat = dump.precursor_feat.shape[-1]
-        self.num_class = None
+        self.num_class = num_labels
 
     def from_file(self, data_path='../data/unique_reaction.pkl.gz', extend_dataset=False, 
                   target_comp_key='target_comp', precursor_comp_key='precursor_comp', **kwargs):

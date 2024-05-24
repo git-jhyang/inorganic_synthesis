@@ -1,6 +1,6 @@
-from .utils import ActiveElements, NEAR_ZERO
+from .utils import ActiveElements, NEAR_ZERO, composit_parser
 import numpy as np
-import json, os
+import json, os, gzip, pickle
 
 ATOM_EXCEPTION_WARNING = 'Warning: element [{}] is not included in feature type "{}"\n'
 FEAT_EXCEPTION_WARNING = 'Warning: feature type [{}] is not supported. '
@@ -10,6 +10,10 @@ for k in ['cgcnn','elemnet','magpie','magpie_sc','mat2vec','matscholar','megnet1
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'elmd', f'{k}.json')) as f:
         elmd_data = json.load(f)
     elmd[k] = elmd_data
+
+with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_unique_precursor.pkl.gz'),'rb') as f:
+    _screened_precursor = pickle.load(f)
+num_labels = len([k for k in _screened_precursor.keys() if isinstance(k, int)])
 
 def composition_to_feature(composit_dict, 
                            feature_type='composit', 
@@ -116,4 +120,14 @@ def active_composit_feature(composit_dict, dtype=float, by_fraction=True, *args,
 #         return True
 #     else:
 #         return False
-    
+
+def get_precursor_info(inp):
+    if isinstance(inp, int):
+        return _screened_precursor[inp]
+    elif isinstance(inp, dict):
+        pstr = composit_parser(inp)
+    elif isinstance(inp, str) and inp in _screened_precursor.keys():
+        pstr = inp
+    else:
+        raise ValueError('Invalid input', inp)
+    return _screened_precursor[pstr]

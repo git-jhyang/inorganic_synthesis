@@ -11,9 +11,12 @@ for k in ['cgcnn','elemnet','magpie','magpie_sc','mat2vec','matscholar','megnet1
         elmd_data = json.load(f)
     elmd[k] = elmd_data
 
-with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_unique_precursor.pkl.gz'),'rb') as f:
-    _screened_precursor = pickle.load(f)
-num_labels = len([k for k in _screened_precursor.keys() if isinstance(k, int)])
+with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz'),'rb') as f:
+    _precursor_info = pickle.load(f)
+_precursor_labels = {p['precursor_str']:l for l,p in _precursor_info.items()}
+NUM_LABEL = len(_precursor_info) + 2
+UNK_LABEL = NUM_LABEL - 2
+EOS_LABEL = NUM_LABEL - 1
 
 def composition_to_feature(composit_dict, 
                            feature_type='composit', 
@@ -121,13 +124,34 @@ def active_composit_feature(composit_dict, dtype=float, by_fraction=True, *args,
 #     else:
 #         return False
 
+def get_precursor_label(inp):
+    if isinstance(inp, dict):
+        pstr = composit_parser(inp)
+    elif isinstance(inp, str):
+        pstr = inp
+    elif isinstance(inp, int) and inp < NUM_LABEL:
+        return inp    
+    else:
+        raise ValueError('Invalid input', inp)
+    if pstr in _precursor_labels.keys():
+        return _precursor_labels[pstr]
+    else:
+        return UNK_LABEL
+
 def get_precursor_info(inp):
-    if isinstance(inp, int):
-        return _screened_precursor[inp]
+    if isinstance(inp, int) and inp < NUM_LABEL - 2:
+        return _precursor_info[inp]
+    elif isinstance(inp, int) and inp == UNK_LABEL:
+        return 'UNK'
+    elif isinstance(inp, int) and inp == EOS_LABEL:
+        return 'EOS'
     elif isinstance(inp, dict):
         pstr = composit_parser(inp)
-    elif isinstance(inp, str) and inp in _screened_precursor.keys():
+    elif isinstance(inp, str):
         pstr = inp
     else:
         raise ValueError('Invalid input', inp)
-    return _screened_precursor[pstr]
+    if pstr in _precursor_labels.keys():
+        return _precursor_info[_precursor_labels[pstr]]
+    else:
+        return 'UNK'

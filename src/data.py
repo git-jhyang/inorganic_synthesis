@@ -2,11 +2,15 @@ from re import L
 import torch, gzip, pickle
 import numpy as np
 from .utils import MetalElements
-from .feature import composition_to_feature, get_precursor_info, num_labels
+from .feature import composition_to_feature, get_precursor_label, NUM_LABEL, UNK_LABEL, EOS_LABEL
 from typing import Dict, List
 
 class BaseData:
-    def __init__(self, data:Dict={}, info_attrs:List[str] = ['id','year']):
+    def __init__(self, 
+                 data : Dict = {}, 
+                 info_attrs : List[str] = ['id','year'],
+                 *args, **kwargs):
+        
         self._info_attrs = info_attrs.copy()
         self._feature_attrs = []
         self.device = None
@@ -45,74 +49,119 @@ class BaseData:
     def __dict__(self):
         return self.to_dict()
 
-class CompositData(BaseData):
+class CompositionData(BaseData):
     def __init__(self, 
-                 comp:Dict, 
-                 data:Dict={}, 
-                 feat_type:str='composit', 
-                 by_fraction=True, 
-                 **kwargs):
-        super().__init__(data, **kwargs)
+                 comp : Dict, 
+                 data : Dict = {}, 
+                 feat_type : str = 'composit', 
+                 label : int = None,
+                 weight : float = None,
+                 *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
+
         self._info_attrs.extend(['comp', 'feat_type'])
         self._feature_attrs.append('feat')
 
-        self.feat_type = [feat_type, by_fraction]
+        self.feat_type = feat_type
         self.comp = comp
-        self.feat = composition_to_feature(comp, feature_type=feat_type, by_fraction=by_fraction)
+        self.feat = composition_to_feature(comp, feature_type=feat_type, by_fraction=True)
+
+        if label is not None:
+            self.label = np.array(label, dtype=int).reshape(-1,1)
+            self._feature_attrs.append('label')
+        if weight is not None:
+            self.weight = np.array(weight, dtype=np.float32).reshape(-1,1)
+            self._feature_attrs.append('weight')
+
         self.to_torch()
 
 class ReactionData(BaseData):
     def __init__(self, 
-                 data:Dict={},
-                 feat_type:str='composit',
-                 target_comp:Dict={},
-                 precursor_comps:List[Dict]=[],
-                 target_feat_by_fraction:bool=True,
-                 metal_feat_by_fraction:str=False,
-                 precursor_feat_by_fraction:bool=True,
-                 conditions:List[str]=[],
-                 condition_values:List[float]=[],
-                 labels:int=None,
-                 weights:float=None,
-                 **kwargs):
-        super().__init__(data, **kwargs)
+                 data : Dict = {},
+                 feat_type : str = 'composit',
+                 target_comp : Dict = {},
+                 precursor_comps : List[Dict] = [],
+                 conditions : List[str] = [],
+                 condition_values : List[float] = [],
+                 labels : int = None,
+                 weights : float = None,
+                 *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
 
         # meta info
-        self._info_attrs.extend(['feat_type', 'target_comp', 'metal_comp'])
-        self._feature_attrs.extend(['target_feat','metal_feat','edge_feat','edge_index'])
-        self.feat_type = [feat_type, target_feat_by_fraction, metal_feat_by_fraction, precursor_feat_by_fraction]
+        self._info_attrs.append('feat_type')
+        self.feat_type = feat_type
+
+        # labels and weights
+        if labels is not None:
+            self.labels = np.array(labels, dtype=int).reshape(-1,1)
+            self._feature_attrs.append('labels')
+        if weights is not None:
+            self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
+            self._feature_attrs.append('weights')
 
         # target
         self.target_comp = target_comp
+        self._info_attrs.append('target_comp')
+        self._feature_attrs.append('target_feat')
         self.target_feat = composition_to_feature(composit_dict=target_comp, 
                                                   feature_type=feat_type, 
-                                                  by_fraction=target_feat_by_fraction)
+                                                  by_fraction=True)
+
+        # conditions
+        for attr, value in zip(conditions, condition_values):
+            setattr(self, attr, np.array(value, dtype=np.float32).reshape(1,-1))
+            self._feature_attrs.append(attr)
 
         # metal and precursor
-        self.metal_comp = []
+        metal_comp = []
         if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
-            self._info_attrs.extend(['precursor_comp'])
-            self._feature_attrs.extend(['precursor_feat', 'label', 'weight'])
+            self._info_attrs.append('precursor_comps')
+            self._feature_attrs.append('precursor_feat')
             
             self.precursor_comps = precursor_comps
             precursor_feat = []
             for precursor_comp in precursor_comps:
                 precursor_feat.append(composition_to_feature(composit_dict=precursor_comp, 
                                                              feature_type=feat_type,
-                                                             by_fraction=precursor_feat_by_fraction))
-                self.metal_comp.append({e:f for e,f in precursor_comp.items() if e in MetalElements})
+                                                             by_fraction=True))
+                metal_comp.append({e:f for e,f in precursor_comp.items() if e in MetalElements})
             self.precursor_feat = np.vstack(precursor_feat)
         else:
             for ele, frac in target_comp.items():
                 if ele in MetalElements:
-                    self.metal_comp.append({ele:frac})
-            self.metal_comp.append({})
+                    metal_comp.append({ele:frac})
+            metal_comp.append({})
 
+        self._feature_attrs.append('metal_feat')
         self.metal_feat = np.vstack([
             composition_to_feature(composit_dict=metal_comp, 
                                    feature_type=feat_type,
-                                   by_fraction=metal_feat_by_fraction) 
-            for metal_comp in self.metal_comp])
+                                   by_fraction=False) 
+            for metal_comp in metal_comp])
+        self.to_torch()
+
+class GraphData(ReactionData):
+    def __init__(self, 
+                 data : Dict = {},
+                 feat_type : str = 'composit',
+                 target_comp : Dict = {},
+                 precursor_comps : List[Dict] = [],
+                 conditions : List[str] = [],
+                 condition_values : List[float] = [],
+                 labels : int = None,
+                 weights : float = None,
+                 *args, **kwargs):
+        
+        super().__init__(data = data,
+                         feat_type = feat_type,
+                         target_comp = target_comp,
+                         precursor_comps = precursor_comps,
+                         conditions = conditions,
+                         condition_values = condition_values,
+                         labels = labels,
+                         weights = weights,
+                         *args, **kwargs)
 
         # graph 
         self._feature_attrs.extend(['edge_feat','edge_index'])
@@ -135,23 +184,51 @@ class ReactionData(BaseData):
                     edge_feat.append(
                         composition_to_feature(composit_dict = edge_comp, 
                                                feature_type = feat_type, 
-                                               by_fraction = target_feat_by_fraction)
+                                               by_fraction = True,
+                                               norm = True)
                     )
         self.edge_index = np.array(edge_index, dtype=int).T
         self.edge_feat = np.vstack(edge_feat, dtype=np.float32)
 
-        # conditions
-        for attr, value in zip(conditions, condition_values):
-            setattr(self, attr, np.array(value, dtype=np.float32).reshape(1,-1))
-            self._feature_attrs.append(attr)
+class SequenceData(ReactionData):
+    def __init__(self, 
+                 data : Dict = {},
+                 feat_type : str = 'composit',
+                 target_comp : Dict = {},
+                 precursor_comps : List[Dict] = [],
+                 conditions : List[str] = [],
+                 condition_values : List[float] = [],
+                 max_length : int = 8,
+                 labels : int = None,
+                 weights : float = None,
+                 *args, **kwargs):
+        super().__init__(data = data,
+                         feat_type = feat_type,
+                         target_comp = target_comp,
+                         precursor_comps = precursor_comps,
+                         conditions = conditions,
+                         condition_values = condition_values,
+                         labels = None,
+                         weights = weights,
+                         *args, **kwargs)
+        
+        self._feature_attrs.pop('metal_feat')
+        delattr(self, 'metal_feat')
 
-        # labels and weights
-        if labels is not None:
-            self.labels = np.array(labels, dtype=int).reshape(-1,1)
-            self._feature_attrs.append('labels')
-        if weights is not None:
-            self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
-            self._feature_attrs.append('weights')
+        # precursor feat
+        if hasattr(self, 'precursor_feat'):
+            pad = np.zeros((self.precursor_feat.shape[0], max_length), dtype=np.float32)
+            self.precursor_feat = np.vstack([
+                pad[0].reshape(1,-1), self.precursor_feat, pad
+            ])[:max_length]
+
+        # labels
+        self._feature_attrs.append('labels')
+        if labels is None:
+            self.labels = np.array([EOS_LABEL]).astype(int)
+        else:
+            padded = [EOS_LABEL] + [l for l in np.array(labels).reshape(-1)] + [EOS_LABEL] * max_length
+            self.labels = np.array(padded[:max_length]).astype(int)
 
         self.to_torch()
 
@@ -165,6 +242,8 @@ class BaseDataset(torch.utils.data.Dataset):
     def __init__(self):
         super().__init__()
         self.init_dataset()
+        self._train = False
+        self.num_labels = NUM_LABEL
 
     def init_dataset(self, extend_dataset=False):
         if not extend_dataset:
@@ -178,6 +257,15 @@ class BaseDataset(torch.utils.data.Dataset):
         dataset = pickle.load(f)
         f.close()
         return dataset
+
+    def update_info(self):
+        if len(self._data) == 0:
+            return
+        for attr in self._data[0]._feature_attrs:
+            if 'feat' not in attr:
+                continue
+            vec = getattr(self._data[0], attr)
+            setattr(self, f'num_{attr}', vec.shape[1])
 
     def to_numpy(self):
         for data in self._data:
@@ -198,7 +286,7 @@ class BaseDataset(torch.utils.data.Dataset):
         return self._data[i]
     
 class CompositionDataset(BaseDataset):
-    def __init__(self, comp_feat_type='active_composit', by_fraction=True):
+    def __init__(self, comp_feat_type='composit', by_fraction=True):
         super().__init__()
         self._comp_feat_type = comp_feat_type
         self._by_fraction = by_fraction
@@ -212,10 +300,10 @@ class CompositionDataset(BaseDataset):
         dataset = self.read_file(data_path)
 
         for data in dataset:
-            comp_data = CompositData(data=data, 
-                                     comp=data[compsition_key], 
-                                     comp_feat_type=self._comp_feat_type, 
-                                     by_fraction=self._by_fraction)
+            comp_data = CompositionData(data=data, 
+                                        comp=data[compsition_key], 
+                                        comp_feat_type=self._comp_feat_type, 
+                                        by_fraction=self._by_fraction)
             self._data.append(comp_data)
         self._year = np.array([d.year for d in self._data])
         self.to_torch()
@@ -230,95 +318,182 @@ class CompositionDataset(BaseDataset):
         return torch.vstack(feat), info
     
 class ReactionDataset(BaseDataset):
-    def __init__(self, 
-                 feat_type:str='active_composit',
-                 target_feat_by_fraction:bool=True,
-                 metal_feat_by_fraction:bool=False,
-                 precursor_feat_by_fraction:bool=False,
-                 train:bool=True,
-                 ):
-        
+    def __init__(self, feat_type:str='composit', data_type='sequence'):
         super().__init__()
-        
+        self.has_temp_info = False
+        self.has_time_info = False
+
         self._feat_type = feat_type
-        self._target_feat_by_fraction = target_feat_by_fraction
-        self._metal_feat_by_fraction = metal_feat_by_fraction
-        self._precursor_feat_by_fraction = precursor_feat_by_fraction
+        if 'graph' in data_type.lower():
+            self._data_type = 'graph'
+        elif 'seq' in data_type.lower():
+            self._data_type = 'sequence'
+        else:
+            self._data_type = 'reaction'
         
-        self._train_data = train
+        self._train = False
+        self._data = []
 
-        dump = self.from_data(data={'dump_tgt':{'Li':1}, 'dump_prec':[{'Li':1}]},
-                              target_comp_key = 'dump_tgt', 
-                              precursor_comp_key = 'dump_prec',
-                              info_attrs = [])
-        self.num_feat = dump.metal_feat.shape[-1]
-        self.num_target_feat = dump.edge_feat.shape[-1]
-        self.num_precursor_feat = dump.precursor_feat.shape[-1]
-        self.num_class = num_labels
-
-    def from_file(self, data_path='../data/unique_reaction.pkl.gz', extend_dataset=False, 
-                  target_comp_key='target_comp', precursor_comp_key='precursor_comp', **kwargs):
+    def from_file(self, data_path, extend_dataset=False, 
+                  target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
+                  heat_temp_key=None, heat_time_key=None, *args, **kwargs):
         dataset = self.read_file(data_path)
-        self.from_dataset(dataset, extend_dataset=extend_dataset, 
-                          target_comp_key=target_comp_key, 
-                          precursor_comp_key=precursor_comp_key,
-                          **kwargs)
+        self.from_dataset(dataset, extend_dataset = extend_dataset, 
+                          target_comp_key = target_comp_key, 
+                          precursor_comp_key = precursor_comp_key,
+                          heat_temp_key = heat_temp_key, 
+                          heat_time_key = heat_time_key, 
+                          *args, **kwargs)
     
     def from_dataset(self, dataset:List[Dict], extend_dataset=False, 
                      target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
-                     info_attrs=['id','raw_id','year'], **kwargs):
+                     heat_temp_key=None, heat_time_key=None, info_attrs=['id','year'], 
+                     *args, **kwargs):
         self.init_dataset(extend_dataset)
         for data in dataset:
-            _data = self.from_data(data = data,
-                                target_comp_key = target_comp_key, 
-                                precursor_comp_key = precursor_comp_key,
-                                info_attrs = info_attrs,
-                                **kwargs)
-            if _data.skip:
-                continue
-            self._data.append(_data)
+            self.from_data(data = data,
+                           target_comp_key = target_comp_key, 
+                           precursor_comp_key = precursor_comp_key,
+                           heat_temp_key = heat_temp_key, 
+                           heat_time_key = heat_time_key, 
+                           info_attrs = info_attrs,
+                           **kwargs)
 
-    def from_data(self, data, target_comp_key, precursor_comp_key=None, info_attrs=[], *args, **kwargs):
-        return ReactionData(data = data,
-                            target_comp_key = target_comp_key, 
-                            target_feat_type = self._target_feat_type,
-                            target_feat_by_fraction = self._target_feat_by_fraction,
-                            metal_feat_type = self._metal_feat_type,
-                            metal_feat_by_fraction = self._metal_feat_by_fraction,
-                            precursor_comp_key = precursor_comp_key,
-                            precursor_feat_type = self._precursor_feat_type,
-                            precursor_feat_by_fraction = self._precursor_feat_by_fraction,
+    def from_data(self, data, target_comp_key, precursor_comp_key=None, 
+                  heat_temp_key=None, heat_time_key=None, info_attrs=[], 
+                  *args, **kwargs):
+        precursor_comps = []
+        precursor_labels = None
+        if precursor_comp_key is not None and precursor_comp_key in data.keys():
+            precursor_comps = data[precursor_comp_key]
+            precursor_labels = [get_precursor_label(p) for p in precursor_comps]
+            precursor_weights = None
+            self._train = True
+        conditions = []
+        condition_values = []
+        if heat_temp_key is not None:
+            self.has_temp_info = True
+            key, val = heat_temp_key
+            if data[key][val] is None:
+                return
+            conditions.append(['heat_temp'])
+            condition_values.append(data[key][val])
+        if heat_time_key is not None:
+            self.has_time_info = True
+            key, val = heat_time_key
+            if data[key][val] is None:
+                return
+            conditions.append(['heat_time'])
+            condition_values.append(data[key][val])
+
+        if self._data_type == 'reaction':
+            self._data.append(
+                ReactionData(data = data,
+                            feat_type = self._feat_type,
+                            target_comp = data[target_comp_key], 
+                            precursor_comps = precursor_comps,
+                            conditions = conditions,
+                            condition_values = condition_values,
+                            labels = precursor_labels,
+                            weights = precursor_weights,
                             info_attrs = info_attrs,
-                            **kwargs)
+                            *args, **kwargs)
+            )
+        elif self._data_type == 'graph':
+            self._data.append(
+                GraphData(data = data,
+                          feat_type = self._feat_type,
+                          target_comp = data[target_comp_key], 
+                          precursor_comps = precursor_comps,
+                          conditions = conditions,
+                          condition_values = condition_values,
+                          labels = precursor_labels,
+                          weights = precursor_weights,
+                          info_attrs = info_attrs,
+                          *args, **kwargs)
+            )
+        elif self._data_type == 'sequence':
+            self._data.append(
+                SequenceData(data = data,
+                             feat_type = self._feat_type,
+                             target_comp = data[target_comp_key], 
+                             precursor_comps = precursor_comps,
+                             conditions = conditions,
+                             condition_values = condition_values,
+                             labels = precursor_labels,
+                             weights = precursor_weights,
+                             info_attrs = info_attrs,
+                             *args, **kwargs)
+            )
 
     def cfn(self, dataset):
         info = []
-        metal_feat = []
-        edge_feat = []
-        edge_index = []
+        x = []
+        rxn_index = []
         n = 0
-        for data in dataset:
-            n_node = data.metal_feat.shape[0]
-            metal_feat.append(data.metal_feat)
-            edge_feat.append(data.edge_feat)
-            edge_index.append(data.edge_index + n)
-            info.append(data.to_dict())
-            n += n_node
+        for i, data in enumerate(dataset):
+            nx = data.metal_feat.shape[0]
+
         
-        precursor_index = []
-        precursor_feat = []
-        if self._train_data:
+
+    def fcfn(self, dataset):
+        info = []
+        node_feat = []
+        edge_attr = []
+        edge_index = []
+        rxn_index = []
+        n = 0
+        for i, data in enumerate(dataset):
+            nx = data.metal_feat.shape[0]
+            node = getattr(data, 'metal_feat')
+            if self.has_temp_info:
+                node = torch.concat([
+                    node, data.heat_temp.repeat((nx, 1))
+                ], dim=-1)
+            if self.has_time_info:
+                node = torch.concat([
+                    node, data.heat_time.repeat((nx, 1))
+                ], dim=-1)
+            node_feat.append(node)
+            edge_attr.append(data.edge_feat)
+            edge_index.append(data.edge_index + n)
+            rxn_index.append([i] * nx)
+            info.append(data.to_dict())
+            n += nx
+        
+        x = []
+        labels = []
+#        weights = []
+        if self._train:
             for data in dataset:
-                precursor_feat.append(data.precursor_feat)
-                precursor_index.append(data.precursor_index)
-            precursor_feat = torch.concat(precursor_feat)
-            precursor_index = torch.concat(precursor_index)
+                x.append(data.precursor_feat)
+                labels.append(data.labels)
+#                weights.append(data.weights)
+            x = torch.concat(x)
+            labels = torch.concat(labels)
+#            weights = torch.concat(weights)
 
         feat = {
-            'x':precursor_feat,
-            'label':precursor_index,
-            'edge_attr':torch.concat(edge_feat),
+            'x':x,
+            'label':labels,
+#            'weights':weights,
+            'node_feat':torch.concat(node_feat),
+            'edge_attr':torch.concat(edge_attr),
             'edge_index':torch.concat(edge_index, -1),
-            'condition':torch.concat(metal_feat),
+            'rxn_index':np.hstack(rxn_index)
         }
         return feat, info
+
+    def gcfn(self, dataset):
+        feat, info = self.fcfn(dataset)
+        for data in dataset:
+
+
+    def rscfn(self, dataset):
+        info = []       
+        rxn_index = []
+        for i, data in enumerate(dataset):
+            nx = data.metal_feat.shape[0]
+
+            rxn_index.append([i] * nx)
+            info.append(data.to_dict())

@@ -1,6 +1,6 @@
 from pymatgen.core import Element
 import numpy as np
-import torch
+import torch, copy
 
 NEAR_ZERO = 1e-5
 
@@ -101,6 +101,43 @@ def composit_parser(composit, fmt='{:.5f}'):
         comp_str.append(f'{k}_' + fmt.format(v))
     return ' '.join(comp_str)
 
+def check_precursor_frequency(reactions, comp_key='precursor_comp'):
+    prec_idx = {}
+    prec_data = []
+    for rxn in reactions:
+        for prec_comp in rxn[comp_key]:
+            pstr = composit_parser(prec_comp)
+            if pstr not in prec_idx.keys():
+                prec_idx[pstr] = len(prec_data)
+                prec_data.append({
+                    'count_rxn': 1,
+                    'count':rxn['count'],
+                    'precursor_comp':prec_comp,
+                    'precursor_str':pstr,
+                })
+            else:
+                i = prec_idx[pstr]
+                prec_data[i]['count_rxn'] += 1
+                prec_data[i]['count'] += rxn['count']
+    return sorted(prec_data, key=lambda x: x['count_rxn'], reverse=True)
 
-#class StratifiedRandomSampler:
-#    def __init__(self, dataset, class_attr)
+def screening_reactions_by_freq(reactions, precursors, minimum_frequency=5):
+    freq = {d['precursor_str']:d['count_rxn'] for d in precursors if isinstance(d, dict)}
+    screened_reaction = []
+    for rxn in reactions:
+        skip_rxn = False
+        for prec_comp in rxn['precursor_comp']:
+            pstr = composit_parser(prec_comp)
+            if pstr not in freq.keys() or freq[pstr] < minimum_frequency:
+                skip_rxn = True
+                break
+        if skip_rxn:
+            continue
+        screened_reaction.append(copy.deepcopy(rxn))
+    screened_precursor = check_precursor_frequency(screened_reaction)
+    min_count = screened_precursor[-1]['count_rxn']
+    print(min_count, screened_precursor[-1]['count'], len(screened_reaction), len(screened_precursor))
+    if min_count < minimum_frequency:
+        return screening_reactions_by_freq(screened_reaction, screened_precursor, minimum_frequency)
+    else:
+        return screened_reaction, screened_precursor

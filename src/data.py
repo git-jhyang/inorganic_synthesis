@@ -100,19 +100,6 @@ class ReactionData(BaseData):
             self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
             self._feature_attrs.append('weights')
 
-        # target
-        self.target_comp = target_comp
-        self._info_attrs.append('target_comp')
-        self._feature_attrs.append('target_feat')
-        self.target_feat = composition_to_feature(composit_dict=target_comp, 
-                                                  feature_type=feat_type, 
-                                                  by_fraction=True)
-
-        # conditions
-        for attr, value in zip(conditions, condition_values):
-            setattr(self, attr, np.array(value, dtype=np.float32).reshape(1,-1))
-            self._feature_attrs.append(attr)
-
         # metal and precursor
         metal_comp = []
         if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
@@ -133,12 +120,28 @@ class ReactionData(BaseData):
                     metal_comp.append({ele:frac})
             metal_comp.append({})
 
+        # metal
         self._feature_attrs.append('metal_feat')
         self.metal_feat = np.vstack([
             composition_to_feature(composit_dict=metal_comp, 
                                    feature_type=feat_type,
                                    by_fraction=False) 
             for metal_comp in metal_comp])
+        self.n = self.metal_feat.shape[0] # number of precursors
+
+        # target
+        self.target_comp = target_comp
+        self._info_attrs.append('target_comp')
+        self._feature_attrs.append('target_feat')
+        self.target_feat = composition_to_feature(composit_dict=target_comp, 
+                                                  feature_type=feat_type, 
+                                                  by_fraction=True)
+        
+        # conditions
+        for attr, value in zip(conditions, condition_values):
+            setattr(self, attr, np.array(value, dtype=np.float32).reshape(1,-1))
+            self._feature_attrs.append(attr)
+
         self.to_torch()
 
 class GraphData(ReactionData):
@@ -212,15 +215,19 @@ class SequenceData(ReactionData):
                          weights = weights,
                          *args, **kwargs)
         
-        self._feature_attrs.pop('metal_feat')
+        self._feature_attrs.pop(self._feature_attrs.index('metal_feat'))
         delattr(self, 'metal_feat')
+        self.n = max_length
 
         # precursor feat
+        pad = np.zeros((self.precursor_feat.shape[0], max_length), dtype=np.float32)
         if hasattr(self, 'precursor_feat'):
-            pad = np.zeros((self.precursor_feat.shape[0], max_length), dtype=np.float32)
             self.precursor_feat = np.vstack([
                 pad[0].reshape(1,-1), self.precursor_feat, pad
             ])[:max_length]
+        else:
+            self._feature_attrs.append('precursor_feat')
+            self.precursor_feat = pad.reshape(1,-1)
 
         # labels
         self._feature_attrs.append('labels')
@@ -428,72 +435,73 @@ class ReactionDataset(BaseDataset):
 
     def cfn(self, dataset):
         info = []
-        x = []
         rxn_index = []
-        n = 0
+        target_feat = []
         for i, data in enumerate(dataset):
-            nx = data.metal_feat.shape[0]
-
-        
-
-    def fcfn(self, dataset):
-        info = []
-        node_feat = []
-        edge_attr = []
-        edge_index = []
-        rxn_index = []
-        n = 0
-        for i, data in enumerate(dataset):
-            nx = data.metal_feat.shape[0]
-            node = getattr(data, 'metal_feat')
-            if self.has_temp_info:
-                node = torch.concat([
-                    node, data.heat_temp.repeat((nx, 1))
-                ], dim=-1)
-            if self.has_time_info:
-                node = torch.concat([
-                    node, data.heat_time.repeat((nx, 1))
-                ], dim=-1)
-            node_feat.append(node)
-            edge_attr.append(data.edge_feat)
-            edge_index.append(data.edge_index + n)
-            rxn_index.append([i] * nx)
             info.append(data.to_dict())
-            n += nx
-        
-        x = []
-        labels = []
-#        weights = []
+            rxn_index.append([i] * data.n)
+            target_feat.append(data.target_feat.repeat((data.n, 1)))
+        rxn_index = np.hstack(rxn_index)
+        condition = torch.concat(target_feat).float()
+
+        inp = []
+        label = []
         if self._train:
             for data in dataset:
-                x.append(data.precursor_feat)
-                labels.append(data.labels)
+                inp.append(data.precursor_feat)
+                label.append(data.labels)
 #                weights.append(data.weights)
-            x = torch.concat(x)
-            labels = torch.concat(labels)
+            inp = torch.concat(inp).float()
+            label = torch.concat(label).long()
 #            weights = torch.concat(weights)
 
-        feat = {
-            'x':x,
-            'label':labels,
-#            'weights':weights,
-            'node_feat':torch.concat(node_feat),
-            'edge_attr':torch.concat(edge_attr),
-            'edge_index':torch.concat(edge_index, -1),
-            'rxn_index':np.hstack(rxn_index)
-        }
-        return feat, info
+        if hasattr(self, 'metal_feat'):
+            metal_info = torch.concat([data.metal_feat for data in dataset])
 
-    def gcfn(self, dataset):
-        feat, info = self.fcfn(dataset)
-        for data in dataset:
+        if self.has_temp_info:
+            condition = torch.concat([
+                condition, 
+                torch.concat([data.heat_temp.repeat((data.n, 1)) for data in dataset]).view(-1,1)
+            ], dim = -1).float()
 
+        if self.has_time_info:
+            condition = torch.concat([
+                condition, 
+                torch.concat([data.heat_time.repeat((data.n, 1)) for data in dataset]).view(-1,1)
+            ], dim = -1).float()
 
-    def rscfn(self, dataset):
-        info = []       
-        rxn_index = []
-        for i, data in enumerate(dataset):
-            nx = data.metal_feat.shape[0]
-
-            rxn_index.append([i] * nx)
-            info.append(data.to_dict())
+        # final output
+        if self._data_type == 'reaction':
+            return {
+                'inp':inp,
+                'label':label,
+                'condition':condition,
+                'rxn_index':rxn_index,
+            }, info
+        elif self._data_type == 'graph':
+            ns = 0
+            edge_attr = []
+            edge_index = []
+            for data in dataset:
+                edge_attr.append(data.edge_attr)
+                edge_index.append(data.edge_index + ns)
+                ns += data.n
+            edge_attr = torch.concat(edge_attr).float()
+            edge_index = torch.concat(edge_index, dim=-1).long()
+            return {
+                'inp':inp,
+                'label':label,
+                'x':condition,
+                'rxn_index':rxn_index,
+                'edge_attr':edge_attr,
+                'edge_index':edge_index,
+            }, info
+        elif self._data_type == 'sequence':
+            n1 = len(dataset)
+            n2 = dataset[0].n
+            return {
+                'inp':inp.view(n1, n2, -1) if isinstance(x, torch.Tensor) else x,
+                'label':label.view(n1, n2),
+                'condition':condition.view(n1, n2, -1),
+                'rxn_index':rxn_index,
+            }, info

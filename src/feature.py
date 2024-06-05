@@ -6,7 +6,7 @@ ATOM_EXCEPTION_WARNING = 'Warning: element [{}] is not included in feature type 
 FEAT_EXCEPTION_WARNING = 'Warning: feature type [{}] is not supported. '
 
 elmd = {}
-for k in ['cgcnn','elemnet','magpie','magpie_sc','mat2vec','matscholar','megnet16','oliynyk','oliynyk_sc']:
+for k in ['cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliynyk_sc']:
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'elmd', f'{k}.json')) as f:
         elmd_data = json.load(f)
     elmd[k] = elmd_data
@@ -14,8 +14,7 @@ for k in ['cgcnn','elemnet','magpie','magpie_sc','mat2vec','matscholar','megnet1
 with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz'),'rb') as f:
     _precursor_info = pickle.load(f)
 _precursor_labels = {p['precursor_str']:l for l,p in _precursor_info.items()}
-NUM_LABEL = len(_precursor_info) + 2
-UNK_LABEL = NUM_LABEL - 2
+NUM_LABEL = len(_precursor_info) + 1
 EOS_LABEL = NUM_LABEL - 1
 
 def composition_to_feature(composit_dict, 
@@ -133,18 +132,18 @@ def get_precursor_label(inp):
         return inp    
     else:
         raise ValueError('Invalid input', inp)
+    
     if pstr in _precursor_labels.keys():
         return _precursor_labels[pstr]
     else:
-        return UNK_LABEL
+        print("Unknown precursor: ", inp)
+        return -1
 
 def get_precursor_info(inp):
-    if isinstance(inp, int) and inp < NUM_LABEL - 2:
+    if isinstance(inp, int) and inp < NUM_LABEL - 1:
         return _precursor_info[inp]
-    elif isinstance(inp, int) and inp == UNK_LABEL:
-        return 'UNK'
     elif isinstance(inp, int) and inp == EOS_LABEL:
-        return 'EOS'
+        return 'EndOfSequence'
     elif isinstance(inp, dict):
         pstr = composit_parser(inp)
     elif isinstance(inp, str):
@@ -154,4 +153,4 @@ def get_precursor_info(inp):
     if pstr in _precursor_labels.keys():
         return _precursor_info[_precursor_labels[pstr]]
     else:
-        return 'UNK'
+        return 'Unknown'

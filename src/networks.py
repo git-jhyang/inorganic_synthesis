@@ -42,18 +42,20 @@ class FCNNBlock(BaseNetwork):
                  output_dim:int, 
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
-                 batch_norm:bool = True, 
-                 negative_slope:float = 0.1,
-                 dropout:float = 0.0,
+                 batch_norm:bool = False, 
+                 dropout:float = 0.2,
                  activation:str = 'LeakyReLU',
-                 **kwargs): 
+                 negative_slope:float = 0.1,
+                 *args, **kwargs): 
         super().__init__(input_dim = input_dim,
                          output_dim = output_dim,
                          hidden_dim = hidden_dim,
                          hidden_layers = hidden_layers,
                          batch_norm = batch_norm,
                          dropout = dropout,
-                         activation = activation)
+                         activation = activation,
+                         negative_slope = negative_slope,
+        )
         
         try:
             activation = eval(f'torch.nn.{activation}({negative_slope})')
@@ -62,25 +64,26 @@ class FCNNBlock(BaseNetwork):
 
         self.embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
+            torch.nn.BatchNorm1d(hidden_dim),
             activation,
         )
 
-        self.hidden_layer = torch.nn.ModuleList()
+        hidden_layer = []
         for _ in range(hidden_layers):
             layer = [torch.nn.Linear(hidden_dim, hidden_dim)]
             if batch_norm:
                 layer.append(torch.nn.BatchNorm1d(hidden_dim))
-            if dropout > 0:
+            elif dropout > 0:
                 layer.append(torch.nn.Dropout(dropout))
             layer.append(activation)
-            self.hidden_layer.append(torch.nn.Sequential(*layer))
-        
+            hidden_layer.append(torch.nn.Sequential(*layer))
+        self.hidden_layer = torch.nn.Sequential(*hidden_layers)
+
         self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
     
     def forward(self, x):
-        h = self.embed_layer(x)
-        for hidden_layer in self.hidden_layer:
-            h = hidden_layer(h)
+        e = self.embed_layer(x)
+        h = self.hidden_layer(e)
         out = self.output_layer(h)
         return out
 
@@ -89,23 +92,23 @@ class GraphAttentionBlock(BaseNetwork):
                  input_dim:int, 
                  edge_dim:int,
                  output_dim:int, 
-                 heads:int = 8,
-                 negative_slope:float = 0.1,
+                 heads:int = 4,
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
                  dropout:float = 0.5,
                  activation:str = 'LeakyReLU',
-                 **kwargs): 
-
+                 negative_slope:float = 0.1,
+                 *args, **kwargs): 
         super().__init__(input_dim = input_dim,
                          edge_dim = edge_dim,
                          output_dim = output_dim,
                          heads = heads,
-                         negative_slope = negative_slope,
                          hidden_dim = hidden_dim,
                          hidden_layers = hidden_layers,
                          dropout = dropout,
-                         activation = activation)
+                         activation = activation,
+                         negative_slope = negative_slope,
+        )
         
         try:
             activation = eval(f'torch.nn.{activation}({negative_slope})')
@@ -114,7 +117,7 @@ class GraphAttentionBlock(BaseNetwork):
 
         self.input_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(input_dim, hidden_dim),
-            torch.nn.Dropout(dropout),
+            torch.nn.BatchNorm1d(hidden_dim),
             activation,
         )
 #        self.edge_embed_layer = torch.nn.Sequential(
@@ -139,14 +142,14 @@ class GraphAttentionBlock(BaseNetwork):
 
         self.output_layer = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, output_dim),
-            torch.nn.Dropout(dropout),
+#            torch.nn.Dropout(dropout),
             activation,
         )
 
     def forward(self, x, edge_index, edge_attr):
-        x = self.input_embed_layer(x)
+        e = self.input_embed_layer(x)
 #        edge_attr = self.edge_embed_layer(edge_attr)
-        h = self.graph_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        h = self.graph_layer(x=e, edge_index=edge_index, edge_attr=edge_attr)
         out = self.output_layer(h)
         return out
 
@@ -158,11 +161,11 @@ class GraphConvolutionBlock(BaseNetwork):
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
                  aggr:str='add',
-#                 batch_norm:bool = True,
-                 negative_slope:float = 0.1,
+                 batch_norm:bool = False,
                  dropout = 0.3,
                  activation:str = 'LeakyReLU',
-                 **kwargs):
+                 negative_slope:float = 0.1,
+                 *args, **kwargs):
         
         super().__init__(input_dim = input_dim,
                          edge_dim = edge_dim,
@@ -170,9 +173,11 @@ class GraphConvolutionBlock(BaseNetwork):
                          hidden_dim = hidden_dim,
                          hidden_layers = hidden_layers,
                          aggr = aggr,
-#                         batch_norm = batch_norm,
+                         batch_norm = batch_norm,
                          dropout = dropout,
-                         activation = activation)
+                         activation = activation,
+                         negative_slope = negative_slope,
+                         )
 
         try:
             activation = eval(f'torch.nn.{activation}({negative_slope})')
@@ -207,17 +212,14 @@ class GraphConvolutionBlock(BaseNetwork):
 #                                              edge_dim = hidden_dim
 #                                             )
             layers.append((layer, 'x, edge_index, edge_attr -> x'))
-#            if batch_norm:
-            layers.append((torch.nn.Dropout(dropout), 'x -> x'))
+            if batch_norm:
+                layers.append((torch.nn.BatchNorm1d(hidden_dim), 'x -> x'))
+            elif dropout > 0:
+                layers.append((torch.nn.Dropout(dropout), 'x -> x'))
 
         self.graph_layer = pyg.nn.Sequential('x, edge_index, edge_attr', layers)
 
-        self.output_layer = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim, output_dim),
-#            torch.nn.Dropout(dropout),
-            torch.nn.BatchNorm1d(output_dim),
-            activation,
-        )
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x, edge_index, edge_attr):
         x = self.input_embed_layer(x)
@@ -225,6 +227,65 @@ class GraphConvolutionBlock(BaseNetwork):
         h = self.graph_layer(x=x, edge_index=edge_index, edge_attr=edge_attr)
         out = self.output_layer(h)
         return out
+
+class TransformerDecoderBlock(BaseNetwork):
+    def __init__(self,
+                 input_dim:int, 
+                 context_dim:int,
+                 output_dim:int, 
+                 num_heads:int = 8,
+                 hidden_dim:int = 32,
+                 hidden_layers:int = 2,
+                 batch_norm:bool = False,
+                 dropout = 0.2,
+                 activation:str = 'LeakyReLU',
+                 negative_slope:float = 0.1,
+                 ):
+        
+        super().__init__(input_dim = input_dim,
+                         context_dim = context_dim,
+                         output_dim = output_dim,
+                         num_heads = num_heads,
+                         hidden_dim = hidden_dim,
+                         hidden_layers = hidden_layers,
+                         batch_norm = batch_norm,
+                         dropout = dropout,
+                         activation = activation,
+                         negative_slope = negative_slope,
+        )
+
+        try:
+            activation = eval(f'torch.nn.{activation}({negative_slope})')
+        except:
+            activation = eval(f'torch.nn.{activation}()')
+
+        self.input_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, hidden_dim),
+            torch.nn.BatchNorm1d(hidden_dim),
+#            torch.nn.Dropout(dropout),
+            activation,
+        )
+        self.context_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(context_dim, hidden_dim),
+            torch.nn.BatchNorm1d(hidden_dim),
+#            torch.nn.Dropout(dropout),
+            activation,
+        )
+
+        self.transformer_decoder = torch.nn.TransformerDecoder(
+            torch.nn.TransformerDecoderLayer(
+                d_model = hidden_dim,
+                nhead = num_heads,
+                dim_feedforward = hidden_dim * 2,
+                dropout = dropout,
+                activation = activation,
+            ), 
+            num_layers = hidden_layers, 
+            norm = torch.nn.BatchNorm1d(hidden_dim) if batch_norm else None,
+        )
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, )
 
 class AutoEncoder(BaseNetwork):
     def __init__(self,

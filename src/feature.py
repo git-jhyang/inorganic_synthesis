@@ -14,8 +14,9 @@ for k in ['cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliyn
 with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz'),'rb') as f:
     _precursor_info = pickle.load(f)
 _precursor_labels = {p['precursor_str']:l for l,p in _precursor_info.items()}
-NUM_LABEL = len(_precursor_info) + 1
-EOS_LABEL = NUM_LABEL - 1
+NUM_LABEL = len(_precursor_info) + 2
+EOS_LABEL = NUM_LABEL - 1 # End of sequence
+SOS_LABEL = NUM_LABEL - 2 # Start of sequence
 
 def composition_to_feature(composit_dict, 
                            feature_type='composit', 

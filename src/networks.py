@@ -1,15 +1,32 @@
 from json import encoder
 from turtle import forward
 from typing import Dict, List
+from .feature import SOS_LABEL, NUM_LABEL
 import torch_geometric as pyg
 import torch, os, pickle
+
+class PositionalEncoding:
+    def __init__(self, num_dim, max_len=100):
+        pe = torch.zeros((max_len, num_dim)).float()
+        pos = torch.arange(0, max_len).reshape(-1,1).float()
+        div = torch.exp(- torch.arange(0, num_dim, 2) * torch.log(torch.tensor([10000])) / num_dim).float()
+        pe[:, 0::2] = torch.sin(pos * div)
+        pe[:, 1::2] = torch.cos(pos * div)
+        self.pe = torch.nn.Parameter(pe, requires_grad=False)
+
+    def __call__(self, seq_len):
+        return self.pe[:seq_len].unsqueeze(0)    
 
 class BaseNetwork(torch.nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self._model_param = kwargs
         self._dummy = torch.tensor([0])
-    
+
+    def to(self, *args, **kwargs):
+        super().to(*args, **kwargs)
+        self._dummy = self._dummy.to(*args, **kwargs)
+
     @property
     def device(self):
         return self._dummy.device
@@ -230,21 +247,20 @@ class GraphConvolutionBlock(BaseNetwork):
 
 class TransformerDecoderBlock(BaseNetwork):
     def __init__(self,
-                 input_dim:int, 
                  context_dim:int,
-                 output_dim:int, 
+                 vocab_dim:int = NUM_LABEL, 
                  num_heads:int = 8,
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
                  batch_norm:bool = False,
+                 positional_encoding:bool = True,
                  dropout = 0.2,
                  activation:str = 'LeakyReLU',
                  negative_slope:float = 0.1,
                  ):
         
-        super().__init__(input_dim = input_dim,
+        super().__init__(vocab_dim = vocab_dim,
                          context_dim = context_dim,
-                         output_dim = output_dim,
                          num_heads = num_heads,
                          hidden_dim = hidden_dim,
                          hidden_layers = hidden_layers,
@@ -259,12 +275,9 @@ class TransformerDecoderBlock(BaseNetwork):
         except:
             activation = eval(f'torch.nn.{activation}()')
 
-        self.input_embed_layer = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, hidden_dim),
-            torch.nn.BatchNorm1d(hidden_dim),
-#            torch.nn.Dropout(dropout),
-            activation,
-        )
+        self.target_embed_layer = torch.nn.Embedding(vocab_dim, hidden_dim)
+        self.positional_encoding = PositionalEncoding(hidden_dim) if positional_encoding else False
+
         self.context_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(context_dim, hidden_dim),
             torch.nn.BatchNorm1d(hidden_dim),
@@ -279,13 +292,37 @@ class TransformerDecoderBlock(BaseNetwork):
                 dim_feedforward = hidden_dim * 2,
                 dropout = dropout,
                 activation = activation,
+                batch_first = True,
             ), 
             num_layers = hidden_layers, 
             norm = torch.nn.BatchNorm1d(hidden_dim) if batch_norm else None,
         )
-        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
+        self.output_layer = torch.nn.Linear(hidden_dim, vocab_dim)
 
-    def forward(self, )
+    def forward(self, target, context, *args, **kwargs):
+        n = target.shape[1]
+        target_mask = torch.nn.Transformer.generate_square_subsequent_mask(n)
+
+        target_embed = self.target_embed_layer(target) 
+        if self.positional_encoding: 
+            target_embed += self.positional_encoding(n)
+        context_embed = self.context_embed_layer(context).unsqueeze(1).repeat(1, n, 1)
+
+        h = self.transformer_decoder(target_embed, context_embed, tgt_mask=target_mask)
+        out = self.output_layer(h)
+        return out
+    
+    def generate(self, context, max_len=20, *args, **kwargs):
+        output_seq = torch.ones(context.shape[0], 1).long() * SOS_LABEL
+        for _ in range(max_len - 1):
+            target = torch.tensor(output_seq).long().to(self.device)
+            output = self.forward(target, context)
+            output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])
+        return output_seq.cpu().numpy()[:, 1:]
+
+    def to(self, *args, **kwargs):
+        super().to(*args, **kwargs)
+        self.positional_encoding.pe = self.positional_encoding.pe.to(*args, **kwargs)
 
 class AutoEncoder(BaseNetwork):
     def __init__(self,

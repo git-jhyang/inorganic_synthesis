@@ -2,10 +2,11 @@ import torch
 import numpy as np
 
 class BaseTrainer:
-    def __init__(self, model, lr, device='cpu'):
+    def __init__(self, model, lr, device='cpu', crit=torch.nn.MSELoss()):
         self.model = model
         self.model.to(device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr)
+        self.crit = crit
         self.device = device
     
     def train(self, dataloader, *args, **kwargs):
@@ -18,7 +19,7 @@ class BaseTrainer:
             loss.backward()
             self.opt.step()
             
-            train_loss += loss
+            train_loss += loss.item()
         return train_loss/len(dataloader)
     
     def test(self, dataloader, *args, **kwargs):
@@ -29,7 +30,7 @@ class BaseTrainer:
             for batch in dataloader:
                 loss, output = self._eval_batch(batch, *args, **kwargs)
                 self._parse_output(batch, output)
-                test_loss += loss
+                test_loss += loss.item()
         return test_loss/len(dataloader), self._output
         
     def predict(self, dataloader, *args, **kwargs):
@@ -51,15 +52,16 @@ class BaseTrainer:
         pass
 
 class AETrainer(BaseTrainer):
-    def __init__(self, model, lr, device='cuda'):
-        super().__init__(model, lr, device)
+    def __init__(self, model, lr, device='cuda', 
+                 crit=lambda x,y: torch.mean(torch.sum(torch.pow(x - y, 2), -1))):
+        super().__init__(model, lr, device, crit)
 
     def _eval_batch(self, batch, compute_loss=True, *args, **kwargs):
         feat, _ = batch
         latent, pred = self.model(feat)
         output = [latent.detach().cpu().numpy(), pred.detach().cpu().numpy()]
         if compute_loss:
-            loss = torch.mean(torch.sum(torch.pow(pred - feat, 2), -1))
+            loss = self.crit(pred, feat)
             # sim = torch.sum(pred * pred, 1, keepdim=True) / (
                 #   torch.sqrt(torch.sum(torch.square(pred), dim=-1, keepdim=True)) * \
                 #   torch.sqrt(torch.sum(torch.square(feat), dim=-1, keepdim=True))
@@ -87,8 +89,9 @@ class AETrainer(BaseTrainer):
                 self._output['input'] = np.vstack([self._output['input'], feat['x'].cpu().numpy()])
 
 class VAETrainer(BaseTrainer):
-    def __init__(self, model, lr, device='cuda'):
-        super().__init__(model, lr, device)
+    def __init__(self, model, lr, device='cuda', 
+                 crit=lambda x,y: torch.mean(torch.sum(torch.pow(x - y, 2), -1))):
+        super().__init__(model, lr, device, crit)
     
     def _eval_batch(self, batch, compute_loss=True, beta=0.1):
         feat, _ = batch
@@ -97,7 +100,7 @@ class VAETrainer(BaseTrainer):
         mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
         output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), mu.numpy(), log_var.exp().numpy(), z.detach().cpu().numpy()]
         if compute_loss:
-            mse = torch.mean(torch.sum(torch.square(feat['x'] - pred), -1))
+            mse = self.crit(feat['x'], pred)
 #            celoss = torch.nn.CrossEntropyLoss()()
             loss = mse + beta * kld.sum()
             return loss, output
@@ -116,7 +119,7 @@ class VAETrainer(BaseTrainer):
                 'var': np.array(var),
                 'z': np.array(z),
             }
-            if feat is not None:
+            if isinstance(feat, dict) and 'input' in feat.keys() and isinstance(feat['x'], torch.Tensor):
                 self._output.update({
                     'input': feat['x'].cpu().numpy(),
                     'label': feat['label'].cpu().numpy().reshape(-1),
@@ -128,7 +131,7 @@ class VAETrainer(BaseTrainer):
             self._output['mu'] = np.vstack([self._output['mu'], mu])
             self._output['var'] = np.vstack([self._output['var'], var])
             self._output['z'] = np.vstack([self._output['z'], z])
-            if feat is not None:
+            if isinstance(feat, dict) and 'input' in feat.keys() and isinstance(feat['x'], torch.Tensor):
                 self._output['input'] = np.vstack([self._output['input'], feat['x'].cpu().numpy()])
                 self._output['label'] = np.hstack([self._output['label'], feat['label'].cpu().numpy().reshape(-1)])
 
@@ -143,7 +146,7 @@ class VAETrainer(BaseTrainer):
         return self._output
 
 class VAEClassTrainer(VAETrainer):
-    def __init__(self, model, lr, device='cuda'):
+    def __init__(self, model, lr, device='cuda', crit=torch.nn.CrossEntropyLoss()):
         super().__init__(model, lr, device)
     
     def _eval_batch(self, batch, compute_loss=True, beta=0.1):
@@ -152,9 +155,10 @@ class VAEClassTrainer(VAETrainer):
         mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
         output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), mu.numpy(), log_var.exp().numpy(), z.detach().cpu().numpy()]
         if compute_loss:
-            celoss = torch.nn.CrossEntropyLoss()(pred, feat['label'])
+            celoss = self.crit(pred, feat['label'])
 #            mse = torch.mean(torch.sum(torch.square(feat['x'] - pvec), -1))
             loss = celoss + beta * kld.sum()
             return loss, output
         else:
             return output
+        

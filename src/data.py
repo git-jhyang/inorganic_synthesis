@@ -1,8 +1,9 @@
 from re import L
 import torch, gzip, pickle
 import numpy as np
+from zmq import has
 from .utils import MetalElements
-from .feature import composition_to_feature, get_precursor_label, NUM_LABEL, EOS_LABEL
+from .feature import composition_to_feature, get_precursor_label, NUM_LABEL, SOS_LABEL, EOS_LABEL
 from typing import Dict, List
 
 class BaseData:
@@ -86,8 +87,8 @@ class ReactionData(BaseData):
                  feat_type : str = 'composit',
                  target_comp : Dict = {},
                  precursor_comps : List[Dict] = [],
-                 conditions : List[str] = [],
-                 condition_values : List[float] = [],
+                 heat_temp : float = None,
+                 heat_time : float = None,
                  weights : float = None,
                  *args, **kwargs):
         super().__init__(data, *args, **kwargs)
@@ -136,15 +137,20 @@ class ReactionData(BaseData):
         # target
         self.target_comp = target_comp
         self._info_attrs.append('target_comp')
-        self._feature_attrs.append('target_feat')
-        self.target_feat = composition_to_feature(composit_dict=target_comp, 
-                                                  feature_type=feat_type, 
-                                                  by_fraction=True)
-        
+        self._feature_attrs.append('condition_feat')
+        self.condition_feat = composition_to_feature(composit_dict=target_comp, 
+                                                     feature_type=feat_type, 
+                                                     by_fraction=True)
+
         # conditions
-        for attr, value in zip(conditions, condition_values):
-            setattr(self, attr, np.array(value, dtype=np.float32).reshape(1,-1))
-            self._feature_attrs.append(attr)
+        if heat_temp is not None:
+            self._info_attrs.append('heat_temp')
+            self.heat_temp = heat_temp
+            self.condition_feat = np.hstack([self.condition_feat, [[heat_temp * 0.001 - 1]]]).astype(np.float32)
+        if heat_time is not None:
+            self._info_attrs.append('heat_time')
+            self.heat_time = heat_time
+            self.condition_feat = np.hstack([self.condition_feat, [[np.log10(heat_time) - 1]]]).astype(np.float32)
 
 class GraphData(ReactionData):
     def __init__(self, 
@@ -152,8 +158,8 @@ class GraphData(ReactionData):
                  feat_type : str = 'composit',
                  target_comp : Dict = {},
                  precursor_comps : List[Dict] = [],
-                 conditions : List[str] = [],
-                 condition_values : List[float] = [],
+                 heat_temp : float = None,
+                 heat_time : float = None,
                  weights : float = None,
                  *args, **kwargs):
         
@@ -161,8 +167,8 @@ class GraphData(ReactionData):
                          feat_type = feat_type,
                          target_comp = target_comp,
                          precursor_comps = precursor_comps,
-                         conditions = conditions,
-                         condition_values = condition_values,
+                         heat_temp = heat_temp,
+                         heat_time = heat_time,
                          weights = weights,
                          *args, **kwargs)
 
@@ -199,8 +205,8 @@ class SequenceData(ReactionData):
                  feat_type : str = 'composit',
                  target_comp : Dict = {},
                  precursor_comps : List[Dict] = [],
-                 conditions : List[str] = [],
-                 condition_values : List[float] = [],
+                 heat_temp : float = None,
+                 heat_time : float = None,
                  max_length : int = 8,
                  weights : float = None,
                  *args, **kwargs):
@@ -208,8 +214,8 @@ class SequenceData(ReactionData):
                          feat_type = feat_type,
                          target_comp = target_comp,
                          precursor_comps = precursor_comps,
-                         conditions = conditions,
-                         condition_values = condition_values,
+                         heat_temp = heat_temp,
+                         heat_time = heat_time,
                          weights = weights,
                          *args, **kwargs)
         
@@ -223,24 +229,23 @@ class SequenceData(ReactionData):
             self.m = self.labels.shape[0]
             self.precursor_feat = np.vstack([
                 pad.reshape(1,-1), self.precursor_feat, *[pad] * max_length
-            ])[:max_length]
+            ])[:max_length].astype(np.float32)[np.newaxis, ...]
             self.labels = np.hstack([
-                self.labels.reshape(-1), [EOS_LABEL] * max_length
-            ])[:max_length].astype(int)
-            self.weights = np.repeat(self.weights, max_length, axis=1)
+                [SOS_LABEL], self.labels.reshape(-1), [EOS_LABEL] * max_length
+            ])[:max_length].astype(int).reshape(1,-1)
         else:
             self._feature_attrs.append('precursor_feat')
-            self.precursor_feat = pad.reshape(1,-1)
+            self._feature_attrs.append('labels')
+            self.precursor_feat = pad.reshape(1, 1, -1)
+            self.labels = np.array([SOS_LABEL]).reshape(1,-1)
 
     def shuffle(self):
         if not hasattr(self, 'm'): 
             return
         j = np.random.permutation(self.m)
-        i1 = np.arange(self.n)
-        i2 = np.arange(self.n)
-        i1[:self.m] = j
-        i2[1:self.m+1] = j+1
-        return self.precursor_feat[i2], self.labels[i1]
+        i = np.arange(self.n)
+        i[1:self.m + 1] = j + 1
+        return self.precursor_feat[:, i], self.labels[:, i]
 
 ################################################################################################
 #
@@ -251,13 +256,17 @@ class SequenceData(ReactionData):
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(self):
         super().__init__()
-        self.init_dataset()
+        self._data = []
         self._train = False
         self.num_labels = NUM_LABEL
 
-    def init_dataset(self, extend_dataset=False):
-        if not extend_dataset:
-            self._data = []
+    def init_dataset(self, init=False):
+        if not init:
+            return
+        if init and len(self._data) != 0:
+            for attr in self._data[0]._feature_attrs:
+                delattr(self, f'num_{attr}')
+        self._data = []
 
     def read_file(self, data_path):
         if ('.gz' in data_path) or ('.gzip' in data_path):
@@ -274,8 +283,21 @@ class BaseDataset(torch.utils.data.Dataset):
         for attr in self._data[0]._feature_attrs:
             if 'feat' not in attr:
                 continue
-            vec = getattr(self._data[0], attr)
-            setattr(self, f'num_{attr}', vec.shape[1])
+            if hasattr(self, f'num_{attr}'):
+                n1 = getattr(self._data[0], attr).shape[-1]
+                n2 = getattr(self._data[-1], attr.shape[-1])
+                if n1 != n2:
+                    raise ValueError('Inconsistent data dimension detected', f'num_{attr}')
+            else:
+                n = getattr(self._data[0], attr).shape[-1]
+                setattr(self, f'num_{attr}', n)
+
+    def get_info(self):
+        for k, v in self.__dict__.items():
+            if k == '_data':
+                print(f'{k} : {len(self._data)}' )
+            else:
+                print(f'{k} : {v}')
 
     def to_numpy(self):
         for data in self._data:
@@ -306,7 +328,7 @@ class CompositionDataset(BaseDataset):
                   compsition_key='target_comp',
                   extend_dataset=False):
 
-        self.init_dataset(extend_dataset)
+        self.init_dataset(not extend_dataset)
         dataset = self.read_file(data_path)
 
         for data in dataset:
@@ -362,7 +384,7 @@ class ReactionDataset(BaseDataset):
                      target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
                      heat_temp_key=None, heat_time_key=None, info_attrs=[], 
                      *args, **kwargs):
-        self.init_dataset(extend_dataset)
+        self.init_dataset(not extend_dataset)
         for data in dataset:
             self.from_data(data = data,
                            target_comp_key = target_comp_key, 
@@ -371,6 +393,7 @@ class ReactionDataset(BaseDataset):
                            heat_time_key = heat_time_key, 
                            info_attrs = info_attrs,
                            *args, **kwargs)
+        self.update_info()
         self.to_torch()
 
     def from_data(self, data, target_comp_key, precursor_comp_key=None, 
@@ -381,23 +404,20 @@ class ReactionDataset(BaseDataset):
         if precursor_comp_key is not None and precursor_comp_key in data.keys():
             precursor_comps = data[precursor_comp_key]
             self._train = True
-        conditions = []
-        condition_values = []
+        heat_temp = None
         if heat_temp_key is not None:
-            self.has_temp_info = True
+            self.heat_temp_info = True
             key, val = heat_temp_key
-            if data[key][val] is None:
+            heat_temp = data[key][val]
+            if heat_temp is None:
                 return
-            conditions.append('heat_temp')
-            condition_values.append(data[key][val] * 0.001 - 1)
+        heat_time = None
         if heat_time_key is not None:
-            self.has_time_info = True
+            self.heat_time_info = True
             key, val = heat_time_key
-            if data[key][val] is None:
+            heat_time = data[key][val]
+            if heat_time is None:
                 return
-            conditions.append('heat_time')
-            condition_values.append(np.log10(data[key][val]) - 1)
-
 #        if self._data_type == 'reaction':
 #            self._data.append(
 #                ReactionData(data = data,
@@ -430,8 +450,8 @@ class ReactionDataset(BaseDataset):
                         feat_type = self._feat_type,
                         target_comp = data[target_comp_key], 
                         precursor_comps = precursor_comps,
-                        conditions = conditions,
-                        condition_values = condition_values,
+                        heat_temp = heat_temp,
+                        heat_time = heat_time,
                         weights = weights,
                         info_attrs = info_attrs,
                         *args, **kwargs)
@@ -440,40 +460,27 @@ class ReactionDataset(BaseDataset):
     def cfn(self, dataset):
         info = []
 #        rxn_index = []
-        target_feat = []
-        for i, data in enumerate(dataset):
+#        inp = []
+        conditions = []
+        label = []
+#        for i, data in enumerate(dataset):
+        for data in dataset:
             info.append(data.to_dict())
 #            rxn_index.append([i] * data.n)
-            target_feat.append(data.target_feat.repeat((data.n, 1)))
+            _prec_feat, _labels = data.shuffle()
+#                inp.append(_prec_feat)
+            label.append(_labels)
+            conditions.append(data.condition_feat)
 #        rxn_index = np.hstack(rxn_index)
-        condition = torch.concat(target_feat).float()
+#        inps = torch.concat(inp).float()
+        label = torch.concat(label).long()
+        context = torch.concat(conditions).float()
 
-        inp = []
-        label = []
-        weights = []
         if self._train:
-            for data in dataset:
-                inp.append(data.precursor_feat)
-                label.append(data.labels)
-                weights.append(data.weights)
-            inp = torch.concat(inp).float()
-            label = torch.concat(label).long()
-            weights = torch.concat(weights).float()
+            weight = torch.concat([d.weights for d in dataset]).float()
 
 #        if hasattr(self, 'metal_feat'):
 #            metal_info = torch.concat([data.metal_feat for data in dataset])
-
-        if self.has_temp_info:
-            condition = torch.concat([
-                condition, 
-                torch.concat([data.heat_temp.repeat((data.n, 1)) for data in dataset]).view(-1,1)
-            ], dim = -1).float()
-
-        if self.has_time_info:
-            condition = torch.concat([
-                condition, 
-                torch.concat([data.heat_time.repeat((data.n, 1)) for data in dataset]).view(-1,1)
-            ], dim = -1).float()
 
         # final output
 #        if self._data_type == 'reaction':
@@ -502,11 +509,12 @@ class ReactionDataset(BaseDataset):
 #                'edge_index':edge_index,
 #            }, info
 #        elif self._data_type == 'sequence':
-        n1 = len(dataset)
-        n2 = dataset[0].n
+        l_seq = dataset[0].n
         return {
-            'inp':inp.view(n1, n2, -1) if isinstance(inp, torch.Tensor) else inp,
-            'label':label.view(n1, n2),
-            'weight':weights,
-            'condition':condition.view(n1, n2, -1),
+#            'inps': inps if isinstance(inps, torch.Tensor) else inps,
+            'target': label[:, :l_seq-1],
+            'label': label[:, 1:],
+            'context': context,
+            'weight': weight.repeat(1, l_seq - 1).view(-1) if self._train else None,
+            'mask': (label[:, 1:] != EOS_LABEL).view(-1) if self._train else None,
         }, info

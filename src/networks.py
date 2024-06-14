@@ -1,7 +1,7 @@
 from json import encoder
 from turtle import forward
 from typing import Dict, List
-from .feature import SOS_LABEL, NUM_LABEL
+from .feature import EOS_LABEL, SOS_LABEL, NUM_LABEL
 import torch_geometric as pyg
 import torch, os, pickle
 
@@ -249,11 +249,11 @@ class TransformerDecoderBlock(BaseNetwork):
     def __init__(self,
                  context_dim:int,
                  vocab_dim:int = NUM_LABEL, 
-                 num_heads:int = 8,
+                 num_heads:int = 4,
                  hidden_dim:int = 32,
                  hidden_layers:int = 2,
-                 batch_norm:bool = False,
                  positional_encoding:bool = True,
+                 batch_norm:bool = False,
                  dropout = 0.2,
                  activation:str = 'LeakyReLU',
                  negative_slope:float = 0.1,
@@ -264,6 +264,7 @@ class TransformerDecoderBlock(BaseNetwork):
                          num_heads = num_heads,
                          hidden_dim = hidden_dim,
                          hidden_layers = hidden_layers,
+                         positional_encoding = positional_encoding,
                          batch_norm = batch_norm,
                          dropout = dropout,
                          activation = activation,
@@ -313,16 +314,19 @@ class TransformerDecoderBlock(BaseNetwork):
         return out
     
     def generate(self, context, max_len=20, *args, **kwargs):
-        output_seq = torch.ones(context.shape[0], 1).long() * SOS_LABEL
-        for _ in range(max_len - 1):
-            target = torch.tensor(output_seq).long().to(self.device)
-            output = self.forward(target, context)
+        output_seq = torch.ones(context.shape[0], 1).long().to(self.device) * SOS_LABEL
+        for _ in range(max_len):
+            output = self.forward(output_seq, context)
             output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])
         return output_seq.cpu().numpy()[:, 1:]
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
-        self.positional_encoding.pe = self.positional_encoding.pe.to(*args, **kwargs)
+        if self.positional_encoding:
+            self.positional_encoding.pe = self.positional_encoding.pe.to(*args, **kwargs)
+
+    def save(self, path, prefix, overwrite=True):
+        self._save(path, f'{prefix}.model', overwrite)
 
 class AutoEncoder(BaseNetwork):
     def __init__(self,

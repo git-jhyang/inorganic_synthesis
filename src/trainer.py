@@ -162,3 +162,39 @@ class VAEClassTrainer(VAETrainer):
         else:
             return output
         
+class SequenceTrainer(BaseTrainer):
+    def __init__(self, model, lr, device='cuda', crit=torch.nn.CrossEntropyLoss(reduction='none')):
+        super().__init__(model, lr, device, crit)
+    
+    def _eval_batch(self, batch, compute_loss=True):
+        _feat, _ = batch
+        feat = {k:v.to(self.device) for k,v in _feat.items()}
+        pred = self.model(**feat)
+        if compute_loss:
+            _loss = self.crit(pred.view(feat['label'].shape[0], -1), feat['label'])[feat['mask']]
+#            print(_loss.shape, feat['weight'].shape, feat['mask'].shape)
+            loss = (_loss * feat['weight'][feat['mask']]).mean()
+            return loss, pred.detach().cpu().numpy()
+        else:
+            return pred.detach().cpu().numpy()
+    
+    def _parse_output(self, batch, output):
+        feat, info = batch
+        if self._output is None:
+            self._output = {
+                'info' : info,
+                'pred' : output
+            }
+            if feat['weight'] is not None:
+                n = feat['context'].shape[0]
+                self._output.update({
+                    'label': feat['label'].cpu().numpy().reshape(n, -1),
+                    'weight': feat['weight'].cpu().numpy().reshape(n, -1)[:, 0],
+                })
+        else:
+            self._output['info'].extend(info)
+            self._output['pred'] = np.vstack([self._output['pred'], output])
+            if feat['weight'] is not None:
+                n = feat['context'].shape[0]
+                self._output['label'] = np.vstack([self._output['label'], feat['label'].cpu().numpy().reshape(n, -1)])
+                self._output['weight'] = np.hstack([self._output['weight'], feat['weight'].cpu().numpy().reshape(n, -1)[:,0]])

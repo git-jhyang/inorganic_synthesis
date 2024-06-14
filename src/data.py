@@ -350,12 +350,20 @@ class CompositionDataset(BaseDataset):
         return torch.vstack(feat), info
     
 class ReactionDataset(BaseDataset):
-    def __init__(self, feat_type:str='composit', data_type='sequence'):
+    def __init__(self, 
+                 feat_type:str = 'composit', 
+#                 data_type:str = 'sequence', 
+                 shuffle_sequence:bool = True, 
+                 sequence_length:int = 8,
+                 include_eos:int = 0):
         super().__init__()
         self.has_temp_info = False
         self.has_time_info = False
 
         self._feat_type = feat_type
+        self._include_eos = include_eos if include_eos in [0,1] else -1
+        self._sequence_length = sequence_length
+        self._shuffle_sequence = shuffle_sequence
 #        if 'graph' in data_type.lower():
 #            self._data_type = 'graph'
 #        elif 'seq' in data_type.lower():
@@ -447,38 +455,62 @@ class ReactionDataset(BaseDataset):
             weights = 1.0 / data['count']
         self._data.append(
             SequenceData(data = data,
-                        feat_type = self._feat_type,
-                        target_comp = data[target_comp_key], 
-                        precursor_comps = precursor_comps,
-                        heat_temp = heat_temp,
-                        heat_time = heat_time,
-                        weights = weights,
-                        info_attrs = info_attrs,
-                        *args, **kwargs)
+                         feat_type = self._feat_type,
+                         target_comp = data[target_comp_key], 
+                         precursor_comps = precursor_comps,
+                         heat_temp = heat_temp,
+                         heat_time = heat_time,
+                         weights = weights,
+                         info_attrs = info_attrs,
+                         max_length = self._sequence_length,
+                         *args, **kwargs)
         )
+
 
     def cfn(self, dataset):
         info = []
-#        rxn_index = []
-#        inp = []
         conditions = []
-        label = []
-#        for i, data in enumerate(dataset):
+        l_seq = dataset[0].n
         for data in dataset:
             info.append(data.to_dict())
-#            rxn_index.append([i] * data.n)
-            _prec_feat, _labels = data.shuffle()
-#                inp.append(_prec_feat)
-            label.append(_labels)
             conditions.append(data.condition_feat)
-#        rxn_index = np.hstack(rxn_index)
-#        inps = torch.concat(inp).float()
-        label = torch.concat(label).long()
-        context = torch.concat(conditions).float()
+        
+        if self._shuffle_sequence:
+            labels = torch.concat([d.shuffle()[1] for d in dataset]).long()
+        else:
+            labels = torch.concat([d.labels for d in dataset]).long()
+
+        target = labels[:, :l_seq-1]
+        label = labels[:, 1:].reshape(-1)
+
+        if self._include_eos == 0:
+            mask = (label != EOS_LABEL)
+        elif self._include_eos == 1:
+            mask = target.reshape(-1) != EOS_LABEL
+        else:
+            mask = torch.ones_like(label).bool()
 
         if self._train:
-            weight = torch.concat([d.weights for d in dataset]).float()
+            weights = torch.concat([d.weights for d in dataset]).float().repeat(1, l_seq - 1).view(-1)
+        else:
+            weights = None
 
+        return {
+            'target': target,
+            'label': label,
+            'context': torch.concat(conditions).float(),
+            'weight': weights,
+            'mask': mask,
+        }, info
+    
+#    def _cfn(self, dataset):
+#        rxn_index = []
+#        inp = []
+#        for i, data in enumerate(dataset):
+#            rxn_index.append([i] * data.n)
+#            inp.append(_prec_feat)
+#        rxn_index = np.hstack(rxn_index)
+#        inps = torch.concat(inp).float()
 #        if hasattr(self, 'metal_feat'):
 #            metal_info = torch.concat([data.metal_feat for data in dataset])
 
@@ -508,13 +540,5 @@ class ReactionDataset(BaseDataset):
 #                'edge_attr':edge_attr,
 #                'edge_index':edge_index,
 #            }, info
-#        elif self._data_type == 'sequence':
-        l_seq = dataset[0].n
-        return {
-#            'inps': inps if isinstance(inps, torch.Tensor) else inps,
-            'target': label[:, :l_seq-1],
-            'label': label[:, 1:],
-            'context': context,
-            'weight': weight.repeat(1, l_seq - 1).view(-1) if self._train else None,
-            'mask': (label[:, 1:] != EOS_LABEL).view(-1) if self._train else None,
-        }, info
+#        return
+    

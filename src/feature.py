@@ -11,13 +11,6 @@ for k in ['cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliyn
         elmd_data = json.load(f)
     elmd[k] = elmd_data
 
-with gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz'),'rb') as f:
-    _precursor_info = pickle.load(f)
-_precursor_labels = {p['precursor_str']:l for l,p in _precursor_info.items()}
-NUM_LABEL = len(_precursor_info) + 2
-EOS_LABEL = NUM_LABEL - 1 # End of sequence
-SOS_LABEL = NUM_LABEL - 2 # Start of sequence
-
 def composition_to_feature(composit_dict, 
                            feature_type='composit', 
                            dtype=np.float32, 
@@ -124,34 +117,3 @@ def active_composit_feature(composit_dict, dtype=float, by_fraction=True, *args,
 #     else:
 #         return False
 
-def get_precursor_label(inp):
-    if isinstance(inp, dict):
-        pstr = composit_parser(inp)
-    elif isinstance(inp, str):
-        pstr = inp
-    elif isinstance(inp, int) and inp < NUM_LABEL:
-        return inp    
-    else:
-        raise ValueError('Invalid input', inp)
-    
-    if pstr in _precursor_labels.keys():
-        return _precursor_labels[pstr]
-    else:
-        print("Unknown precursor: ", inp)
-        return -1
-
-def get_precursor_info(inp):
-    if isinstance(inp, int) and inp < NUM_LABEL - 1:
-        return _precursor_info[inp]
-    elif isinstance(inp, int) and inp == EOS_LABEL:
-        return 'EndOfSequence'
-    elif isinstance(inp, dict):
-        pstr = composit_parser(inp)
-    elif isinstance(inp, str):
-        pstr = inp
-    else:
-        raise ValueError('Invalid input', inp)
-    if pstr in _precursor_labels.keys():
-        return _precursor_info[_precursor_labels[pstr]]
-    else:
-        return 'Unknown'

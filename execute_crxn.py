@@ -1,12 +1,13 @@
 import multiprocessing as mp
-import run_transf as R
+import seq_crxn as R
 import numpy as np
 
 param_dict = {
     'feature_type' : ['composit','cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliynyk_sc',],
     'include_eos' : [1, 2],
     'shuffle_sequence' : [True, False],
-    'heads' : [2, 4, 6, 8],
+    'weighted_loss': [True, False],
+    'heads' : [2, 4, 8],
     'hidden_dims' : [32, 64, 128, 256],
     'hidden_layers' : [2, 4, 6, 8],
     'positional_encoding' : [True, False],

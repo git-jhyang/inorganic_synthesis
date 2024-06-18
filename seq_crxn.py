@@ -16,6 +16,7 @@ parser.add_argument('--feature_type', default='composit', type=str)
 parser.add_argument('--include_eos', default=1, type=int)
 parser.add_argument('--shuffle_sequence', action='store_true')
 parser.add_argument('--sequence_length', default=8, type=int)
+parser.add_argument('--weighted_loss', action='store_true')
 
 parser.add_argument('--heads', default=4, type=int)
 parser.add_argument('--hidden_dim', default=64, type=int)
@@ -36,18 +37,19 @@ def main(args):
     if args.include_eos not in [0,1]:
         args.include_eos = 'all'
 
-    identifier = 'cls/{:s}_EOS{}_{:s}_{:s}_Head{:1d}_Dim{:03d}_Lay{:1d}_Bat{:03d}'.format(
-        args.feature_type, args.include_eos, 'RandSeq' if args.shuffle_sequence else 'OrdSeq', 
-        'PE' if args.positional_encoding else 'nPE', args.heads, args.hidden_dim, args.hidden_layers,
+    identifier = 'crxn/{:s}_EOS{}_{}{}{}_Head{:1d}_Dim{:03d}_Lay{:1d}_Bat{:03d}'.format(
+        args.feature_type, args.include_eos, 
+        'rS' if args.shuffle_sequence else 'oS', 
+        'W' if args.weighted_loss else 'uW',
+        'PE' if args.positional_encoding else 'nPE', 
+        args.heads, args.hidden_dim, args.hidden_layers,
         args.batch_size, 
     )
 
     output_path = f'/home/jhyang/WORKSPACES/MODELS/isyn/tfdec/{identifier}'
     if os.path.isdir(output_path):
-        for i in range(100):
-            if not os.path.isdir(output_path + f'_case_{i:02d}'):
-                break
-        output_path += f'_case_{i:02d}'
+        print("Folder already exists")
+        return
     os.makedirs(output_path, exist_ok=True)
     writer = SummaryWriter(output_path)
     if args.logging:
@@ -57,12 +59,14 @@ def main(args):
     DS = ReactionDataset(feat_type = args.feature_type,
                         include_eos = args.include_eos, 
                         shuffle_sequence = args.shuffle_sequence,
-                        sequence_length = args.sequence_length)
+                        sequence_length = args.sequence_length,
+                        weights = args.weighted_loss)
+    
     DS.from_file('./data/screened_conditional_reaction.pkl.gz', heat_temp_key=('heat_temp','median'))
 
     years = np.array([d.year for d in DS])
     train_mask = years < 2016
-    valid_mask = (years >= 2016) & years < 2018
+    valid_mask = (years >= 2016) & (years < 2018)
     test_mask = years >= 2018
 
     train_dl = DataLoader(DS, batch_size=args.batch_size, sampler=SubsetRandomSampler(np.where(train_mask)[0]), collate_fn=DS.cfn)

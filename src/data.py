@@ -3,7 +3,7 @@ import torch, gzip, pickle
 import numpy as np
 from zmq import has
 from .utils import MetalElements
-from .feature import composition_to_feature, get_precursor_label, NUM_LABEL, SOS_LABEL, EOS_LABEL
+from .feature import composition_to_feature
 from typing import Dict, List
 
 class BaseData:
@@ -14,7 +14,7 @@ class BaseData:
                  *args, **kwargs):        
         self._info_attrs = []
         self._feature_attrs = []
-        self.device = None
+#        self.device = None
         for attr in base_info_attrs + info_attrs:
             if attr not in data.keys():
                 continue
@@ -28,25 +28,25 @@ class BaseData:
             data = getattr(self, attr)
             if isinstance(data, torch.Tensor):
                 setattr(self, attr, data.cpu().numpy())
-        self.device = None
+#        self.device = None
     
     def to_torch(self):
         for attr in self._feature_attrs:
             data = getattr(self, attr)
             if isinstance(data, np.ndarray):
                 setattr(self, attr, torch.from_numpy(data))            
-        self.device = 'cpu'
+#        self.device = 'cpu'
     
-    def to(self, device='cpu'):
-        if len(self._feature_attrs) == 0:
-            return
-        data = getattr(self, self._feature_attrs[0])
-        if self.device is None:
-            self.to_torch()
-        for attr in self._feature_attrs:
-            data = getattr(self, attr)
-            setattr(self, attr, data.to(device))
-        self.device = device
+#    def to(self, device='cpu'):
+#        if len(self._feature_attrs) == 0:
+#            return
+#        data = getattr(self, self._feature_attrs[0])
+#        if self.device is None:
+#            self.to_torch()
+#        for attr in self._feature_attrs:
+#            data = getattr(self, attr)
+#            setattr(self, attr, data.to(device))
+#        self.device = device
 
     def to_dict(self):
         output_dict = {attr:getattr(self, attr) for attr in self._info_attrs}
@@ -307,9 +307,9 @@ class BaseDataset(torch.utils.data.Dataset):
         for data in self._data:
             data.to_torch()
     
-    def to(self, device):
-        for data in self._data:
-            data.to(device)
+#    def to(self, device):
+#        for data in self._data:
+#            data.to(device)
 
     def __len__(self):
         return len(self._data)
@@ -355,7 +355,8 @@ class ReactionDataset(BaseDataset):
 #                 data_type:str = 'sequence', 
                  shuffle_sequence:bool = True, 
                  sequence_length:int = 8,
-                 include_eos:int = 0):
+                 include_eos:int = 0,
+                 weights:bool = True):
         super().__init__()
         self.has_temp_info = False
         self.has_time_info = False
@@ -364,6 +365,7 @@ class ReactionDataset(BaseDataset):
         self._include_eos = include_eos if include_eos in [0,1] else -1
         self._sequence_length = sequence_length
         self._shuffle_sequence = shuffle_sequence
+        self._weights = weights
 #        if 'graph' in data_type.lower():
 #            self._data_type = 'graph'
 #        elif 'seq' in data_type.lower():
@@ -371,7 +373,6 @@ class ReactionDataset(BaseDataset):
 #        else:
 #            self._data_type = 'reaction'
         self._data_type = 'sequence'
-
         self._train = False
         self._data = []
 
@@ -451,7 +452,8 @@ class ReactionDataset(BaseDataset):
 #                          *args, **kwargs)
 #            )
 #        elif self._data_type == 'sequence':
-        if self._train:
+        weights = 1
+        if self._train and self._weights:
             weights = 1.0 / data['count']
         self._data.append(
             SequenceData(data = data,

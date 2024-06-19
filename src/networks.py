@@ -1,8 +1,4 @@
-from json import encoder
-from turtle import forward
 from typing import Dict, Iterable, List
-
-from IPython import embed
 from .feature import EOS_LABEL, SOS_LABEL, NUM_LABEL
 import torch_geometric as pyg
 import torch, os, pickle
@@ -289,9 +285,15 @@ class TransformerDecoderBlock(BaseNetwork):
         except:
             activation = eval(f'torch.nn.{activation}()')
 
-        self.target_embed_layer = torch.nn.Embedding(vocab_dim, hidden_dim)
-        if embedding is not None:
-            self.target_embed_layer = self.target_embed_layer.from_pretrained(torch.from_numpy(embedding).float())
+        if embedding is None:
+            self.target_embed_layer = torch.nn.Embedding(vocab_dim, hidden_dim)
+        else:
+            vocab_dim, embedding_dim = embedding.shape
+            embed_layer = torch.nn.Embedding(vocab_dim, embedding_dim)
+            self.target_embed_layer = torch.nn.Sequential(
+                embed_layer.from_pretrained(torch.from_numpy(embedding).float()),
+                torch.nn.Linear(embedding_dim, hidden_dim)
+            )
 
         self.positional_encoding = PositionalEncoding(hidden_dim) if positional_encoding else False
 

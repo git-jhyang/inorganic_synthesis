@@ -508,13 +508,9 @@ class ReactionDataset(BaseDataset):
                  shuffle_sequence:bool = True, 
                  sequence_length:int = 8,
                  include_eos:int = 0,
-                 end_of_seq:bool = True,
-                 start_of_seq:bool = True,
                  weights:bool = True):
         super().__init__()
         self.precursor_dataset = PrecursorDataset(feat_type=feat_type,
-                                                  end_of_seq = end_of_seq,
-                                                  start_of_seq = start_of_seq,
                                                   by_fraction = True,
                                                   norm = True)
         self.has_temp_info = False

@@ -1,11 +1,8 @@
 import torch, gzip, pickle, json
 import numpy as np
 from .utils import MetalElements, composit_parser
-from .feature import composition_to_feature
+from .feature import composition_to_feature, PrecursorDataset
 from typing import Dict, List
-
-EOS_LABEL = None
-SOS_LABEL = None
 
 class BaseData:
     def __init__(self, 
@@ -91,7 +88,7 @@ class ReactionData(BaseData):
                  precursor_refs = None,
                  heat_temp : float = None,
                  heat_time : float = None,
-                 weights : float = None,
+                 weights : float = 1.0,
                  *args, **kwargs):
         super().__init__(data, *args, **kwargs)
 
@@ -100,9 +97,8 @@ class ReactionData(BaseData):
         self.feat_type = feat_type
 
         # weights
-        if weights is not None:
-            self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
-            self._feature_attrs.append('weights')
+        self.weights = np.array(weights, dtype=np.float32).reshape(-1,1)
+        self._feature_attrs.append('weights')
 
         # label, precursor and metal
         metal_comp = []
@@ -162,7 +158,7 @@ class GraphData(ReactionData):
                  precursor_refs = None,
                  heat_temp : float = None,
                  heat_time : float = None,
-                 weights : float = None,
+                 weights : float = 1.0,
                  *args, **kwargs):
         
         super().__init__(data = data,
@@ -212,7 +208,7 @@ class SequenceData(ReactionData):
                  heat_temp : float = None,
                  heat_time : float = None,
                  max_length : int = 8,
-                 weights : float = None,
+                 weights : float = 1.0,
                  *args, **kwargs):
         super().__init__(data = data,
                          feat_type = feat_type,
@@ -229,14 +225,14 @@ class SequenceData(ReactionData):
         self.n = max_length
 
         # labels & precursor feat
-        pad = composition_to_feature({}, feature_type=feat_type)
+        EOS, EOS_VEC = precursor_refs.get_precursor_data('EOS')
+        SOS, SOS_VEC = precursor_refs.get_precursor_data('SOS')
+
         if hasattr(self, 'precursor_feat'):
-            EOS, EOS_VEC = precursor_refs.get_precursor_data('EOS')
-            SOS, SOS_VEC = precursor_refs.get_precursor_data('SOS')
                 
             self.m = self.labels.shape[0]
             self.precursor_feat = np.vstack([
-                SOS_VEC, self.precursor_feat, np.repeat(EOS_VEC, max_length, axis=0)
+                SOS_VEC.reshape(1,-1), self.precursor_feat, np.repeat(EOS_VEC.reshape(1,-1), max_length, axis=0)
             ])[:max_length].astype(np.float32)[np.newaxis, ...]
             self.labels = np.hstack([
                 [SOS], self.labels.reshape(-1), [EOS] * max_length
@@ -244,8 +240,8 @@ class SequenceData(ReactionData):
         else:
             self._feature_attrs.append('precursor_feat')
             self._feature_attrs.append('labels')
-            self.precursor_feat = pad.reshape(1, 1, -1)
-            self.labels = np.array([precursor_refs.SOS_LABEL]).reshape(1,-1)
+            self.precursor_feat = SOS_VEC.reshape(1, 1, -1)
+            self.labels = np.array([SOS]).reshape(1,-1)
 
     def shuffle(self):
         if not hasattr(self, 'm'): 
@@ -255,150 +251,6 @@ class SequenceData(ReactionData):
         i[1:self.m + 1] = j + 1
         return self.precursor_feat[:, i], self.labels[:, i]
 
-
-
-################################################################################################
-################################################################################################
-#
-#   Precursor dataset class
-#
-################################################################################################
-################################################################################################
-
-
-
-class PrecursorDataset:
-    def __init__(self, 
-                 feat_type:str = 'composit',
-                 by_fraction:bool = True,
-                 norm:bool = True
-                 ):
-        self._feat_type = feat_type
-        self._by_fraction = by_fraction
-        self._norm = norm
-
-#        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz')
-        path = '../data/screened_precursor.pkl.gz'
-
-        with gzip.open(path, 'rb') as f:
-            self.precursor_source = pickle.load(f)
-        self.active_precursors = [p['precursor_str'] for p in self.precursor_source]
-        self.parse_labels()
-
-    def parse_labels(self, active_precursors=None):
-        global EOS_LABEL, SOS_LABEL
-        if isinstance(active_precursors, (list, np.ndarray)):
-            self.active_precursors = active_precursors
-
-        self.label_to_precursor = []
-        self.label_to_source = []
-        self.precursor_to_label = {}
-        self.source_to_label = -np.ones(len(self.precursor_source) + 2, dtype=int)
-        self.embedding = []
-        for i, prec in enumerate(self.precursor_source):
-            pstr = prec['precursor_str']
-            if pstr not in self.active_precursors:
-                continue
-            j = len(self.label_to_precursor)
-            self.label_to_precursor.append(pstr)
-            self.label_to_source.append(i)
-            self.precursor_to_label.update({pstr:j})
-            self.source_to_label[i] = j
-            self.embedding.append(composition_to_feature(composit_dict = prec['precursor_comp'], 
-                                                         feature_type = self._feat_type,
-                                                         by_fraction = self._by_fraction,
-                                                         norm = self._norm))
-
-        self.NUM_LABEL = len(self.label_to_precursor) + 2
-        i = len(self.precursor_source)
-        j = len(self.label_to_precursor)
-
-        EOS_LABEL = j
-        self.label_to_precursor.append('EOS')
-        self.label_to_source.append(i)
-        self.precursor_to_label.update({'EOS':j})
-        self.source_to_label[i] = j
-        self.embedding.append(np.zeros_like(self.embedding[0]))
-
-        SOS_LABEL = j + 1
-        self.label_to_precursor.append('SOS')
-        self.label_to_source.append(i + 1)
-        self.precursor_to_label.update({'SOS':j + 1})
-        self.source_to_label[i + 1] = j + 1
-        self.embedding.append(np.ones_like(self.embedding[0]))
-
-        self.label_to_precursor = np.array(self.label_to_precursor)
-        self.label_to_source = np.array(self.label_to_source)
-        self.embedding = np.vstack(self.embedding)
-        
-    def update_labels(self, dataset, prec_comp_attr='precursor_comps'):
-        prec_comps = []
-        for data in dataset:
-            if not hasattr(data, prec_comp_attr):
-                continue
-            for p in getattr(data, prec_comp_attr):
-                prec_comp = composit_parser(p)
-                if prec_comp in prec_comps:
-                    continue
-                else:
-                    prec_comps.append(prec_comp)
-        self.parse_labels(prec_comps)
-
-    def save(self, path):
-        if isinstance(self.active_precursors, np.ndarray):
-            self.active_precursors = self.active_precursors.tolist()
-        info = {
-            'feat_type': self._feat_type,
-            'by_fraction': self._by_fraction,
-            'norm': self._norm,
-            'active_precursors': self.active_precursors,
-        }
-        with open(path, 'w') as f:
-            json.dump(info, f, indent=4)
-    
-    def load(self, path):
-        with open(path, 'r') as f:
-            info = json.load(f)
-        self.__init__(feat_type = info['feat_type'],
-                      by_fraction = info['by_fraction'],
-                      norm = info['norm'])
-        self.parse_labels(info['active_precursors'])
-
-    def _check_valid_precursor(self, precursor):
-        if isinstance(precursor, int) and precursor < self.NUM_LABEL:
-            i = precursor
-        elif isinstance(precursor, str) and precursor in self.active_precursors:
-            i = self.precursor_to_label[precursor]
-        elif isinstance(precursor, dict) and composit_parser(precursor) in self.active_precursors:
-            i = self.precursor_to_label[composit_parser(precursor)]
-        else:
-            print("Unknown precursor: ", precursor)
-            return None
-        return i
-
-    def get_precursor_data(self, precursor):
-        i = self._check_valid_precursor(precursor)
-        if i is None:
-            return None, None
-        return i, self.embedding[i]
-
-    def get_precursor_info(self, precursor):
-        i = self._check_valid_precursor(precursor)
-        if i is None:
-            return None, None
-        j = self.label_to_source[i]
-        return i, self.precursor_source[j]
-
-    def to_dict(self):
-        return {
-            'feature_type': self._feat_type, 
-            'EOS_LABEL': EOS_LABEL, 
-            'SOS_LABEL': SOS_LABEL, 
-            'NUM_LABEL': self.NUM_LABEL,
-        }
-
-
-
 ################################################################################################
 ################################################################################################
 #
@@ -406,8 +258,6 @@ class PrecursorDataset:
 #
 ################################################################################################
 ################################################################################################
-
-
 
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(self):
@@ -470,36 +320,36 @@ class BaseDataset(torch.utils.data.Dataset):
     def __getitem__(self, i):
         return self._data[i]
     
-class CompositionDataset(BaseDataset):
-    def __init__(self, comp_feat_type='composit', by_fraction=True):
-        super().__init__()
-        self._comp_feat_type = comp_feat_type
-        self._by_fraction = by_fraction
+# class CompositionDataset(BaseDataset):
+#     def __init__(self, comp_feat_type='composit', by_fraction=True):
+#         super().__init__()
+#         self._comp_feat_type = comp_feat_type
+#         self._by_fraction = by_fraction
 
-    def from_file(self, 
-                  data_path='../data/unique_target.pkl.gz', 
-                  compsition_key='target_comp',
-                  extend_dataset=False):
-        if not extend_dataset:
-            self.init_dataset()
-        dataset = self.read_file(data_path)
+#     def from_file(self, 
+#                   data_path='../data/unique_target.pkl.gz', 
+#                   compsition_key='target_comp',
+#                   extend_dataset=False):
+#         if not extend_dataset:
+#             self.init_dataset()
+#         dataset = self.read_file(data_path)
 
-        for data in dataset:
-            comp_data = CompositionData(data=data, 
-                                        comp=data[compsition_key], 
-                                        comp_feat_type=self._comp_feat_type, 
-                                        by_fraction=self._by_fraction)
-            self._data.append(comp_data)
-        self._year = np.array([d.year for d in self._data])
-        self.to_torch()
+#         for data in dataset:
+#             comp_data = CompositionData(data=data, 
+#                                         comp=data[compsition_key], 
+#                                         comp_feat_type=self._comp_feat_type, 
+#                                         by_fraction=self._by_fraction)
+#             self._data.append(comp_data)
+#         self._year = np.array([d.year for d in self._data])
+#         self.to_torch()
 
-    def cfn(self, dataset):
-        feat = []
-        info = []
-        for data in dataset:
-            feat.append(data.comp_feat)
-            info.append(data.to_dict())
-        return torch.vstack(feat), info
+#     def cfn(self, dataset):
+#         feat = []
+#         info = []
+#         for data in dataset:
+#             feat.append(data.comp_feat)
+#             info.append(data.to_dict())
+#         return torch.vstack(feat), info
     
 class ReactionDataset(BaseDataset):
     def __init__(self, 
@@ -521,15 +371,27 @@ class ReactionDataset(BaseDataset):
         self._sequence_length = sequence_length
         self._shuffle_sequence = shuffle_sequence
         self._weights = weights
-#        if 'graph' in data_type.lower():
-#            self._data_type = 'graph'
-#        elif 'seq' in data_type.lower():
-#            self._data_type = 'sequence'
-#        else:
-#            self._data_type = 'reaction'
+        # if 'graph' in data_type.lower():
+        #     self._data_type = 'graph'
+        # elif 'seq' in data_type.lower():
+        #     self._data_type = 'sequence'
+        # else:
+        #     self._data_type = 'reaction'
         self._data_type = 'sequence'
         self._train = False
         self._data = []
+
+    @property
+    def NUM_LABEL(self):
+        return self.precursor_dataset.NUM_LABEL
+
+    @property
+    def EOS_LABEL(self):
+        return self.precursor_dataset.EOS_LABEL
+
+    @property
+    def SOS_LABEL(self):
+        return self.precursor_dataset.SOS_LABEL
 
     def from_file(self, data_path, extend_dataset=False, 
                   target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
@@ -553,9 +415,10 @@ class ReactionDataset(BaseDataset):
             active_precs = []
             for data in dataset:
                 for prec in data['precursor_comp']:
-                    if prec in active_precs:
+                    pstr = composit_parser(prec)
+                    if pstr in active_precs:
                         continue
-                    active_precs.append(prec)
+                    active_precs.append(pstr)
             self.precursor_dataset.update(active_precs)
         for data in dataset:
             self.from_data(data = data,
@@ -615,7 +478,7 @@ class ReactionDataset(BaseDataset):
 #                          *args, **kwargs)
 #            )
 #        elif self._data_type == 'sequence':
-        weights = 1
+        weights = 1.0
         if self._train and self._weights:
             weights = 1.0 / data['count']
         self._data.append(
@@ -634,36 +497,50 @@ class ReactionDataset(BaseDataset):
 
     def cfn(self, dataset):
         info = []
+        labels = []
+        prec_feats = []
         conditions = []
-        l_seq = dataset[0].n
+        weights = []
+        mask = []
+        N = dataset[0].n
         for data in dataset:
             info.append(data.to_dict())
             conditions.append(data.condition_feat)
-        
-        if self._shuffle_sequence:
-            labels = torch.concat([d.shuffle()[1] for d in dataset]).long()
-        else:
-            labels = torch.concat([d.labels for d in dataset]).long()
+            m = np.zeros(N, dtype=bool)
+            m[:data.m+1] = True
+            mask.append(m.reshape(1,-1))
+            weights.append(data.weights)
 
-        target = labels[:, :l_seq-1]
+            if self._shuffle_sequence:
+                prec_feat, label = data.shuffle()
+                labels.append(label)
+                prec_feats.append(prec_feat)
+            else:
+                labels.append(data.labels)
+                prec_feats.append(data.precursor_feat)
+
+        labels = torch.concat(labels).long()
+        prec_feats = torch.concat(prec_feats).float()[:, :N-1]
+        conditions = torch.concat(conditions).float()
+        weights = torch.concat(weights).reshape(-1,1).repeat(1, N-1).reshape(-1).float()
+        mask = torch.from_numpy(np.vstack(mask)).bool()
+
+        target = labels[:, :N-1]
         label = labels[:, 1:].reshape(-1)
+        mask = torch.from_numpy(np.vstack(mask)).bool()
 
         if self._include_eos == 0:
-            mask = (label != EOS_LABEL)
+            mask = mask[:, 1:].reshape(-1)
         elif self._include_eos == 1:
-            mask = target.reshape(-1) != EOS_LABEL
+            mask = mask[:, :N-1].reshape(-1)
         else:
             mask = torch.ones_like(label).bool()
 
-        if self._train:
-            weights = torch.concat([d.weights for d in dataset]).float().repeat(1, l_seq - 1).view(-1)
-        else:
-            weights = None
-
         return {
             'target': target,
+            'precursor_feat': prec_feats,
             'label': label,
-            'context': torch.concat(conditions).float(),
+            'context': conditions,
             'weight': weights,
             'mask': mask,
         }, info

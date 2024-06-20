@@ -117,3 +117,127 @@ def active_composit_feature(composit_dict, dtype=float, by_fraction=True, *args,
 #     else:
 #         return False
 
+
+################################################################################################
+################################################################################################
+#
+#   Precursor dataset class
+#
+################################################################################################
+################################################################################################
+
+class PrecursorDataset:
+    def __init__(self, 
+                 feat_type:str = 'composit',
+                 by_fraction:bool = True,
+                 norm:bool = True
+                 ):
+        self._feat_type = feat_type
+        self._by_fraction = by_fraction
+        self._norm = norm
+
+#        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz')
+        path = '../data/screened_precursor.pkl.gz'
+
+        with gzip.open(path, 'rb') as f:
+            self.precursor_source = pickle.load(f)
+        self.active_precursors = [p['precursor_str'] for p in self.precursor_source]
+        self.update()
+
+    def update(self, active_precursors=None):
+        if isinstance(active_precursors, (list, np.ndarray)):
+            self.active_precursors = active_precursors
+
+        self.label_to_precursor = []
+        self.label_to_source = []
+        self.precursor_to_label = {}
+        self.source_to_label = -np.ones(len(self.precursor_source) + 2, dtype=int)
+        self.embedding = []
+        for i, prec in enumerate(self.precursor_source):
+            pstr = prec['precursor_str']
+            if pstr not in self.active_precursors:
+                continue
+            j = len(self.label_to_precursor)
+            self.label_to_precursor.append(pstr)
+            self.label_to_source.append(i)
+            self.precursor_to_label.update({pstr:j})
+            self.source_to_label[i] = j
+            self.embedding.append(composition_to_feature(composit_dict = prec['precursor_comp'], 
+                                                         feature_type = self._feat_type,
+                                                         by_fraction = self._by_fraction,
+                                                         norm = self._norm))
+
+        self.NUM_LABEL = len(self.label_to_precursor) + 2
+        i = len(self.precursor_source)
+        j = len(self.label_to_precursor)
+
+        self.EOS_LABEL = j
+        self.label_to_precursor.append('EOS')
+        self.label_to_source.append(i)
+        self.precursor_to_label.update({'EOS':j})
+        self.source_to_label[i] = j
+        self.embedding.append(np.zeros_like(self.embedding[0]))
+
+        self.SOS_LABEL = j + 1
+        self.label_to_precursor.append('SOS')
+        self.label_to_source.append(i + 1)
+        self.precursor_to_label.update({'SOS':j + 1})
+        self.source_to_label[i + 1] = j + 1
+        self.embedding.append(np.ones_like(self.embedding[0]))
+
+        self.label_to_precursor = np.array(self.label_to_precursor)
+        self.label_to_source = np.array(self.label_to_source)
+        self.embedding = np.vstack(self.embedding)
+        
+    def save(self, path):
+        if isinstance(self.active_precursors, np.ndarray):
+            self.active_precursors = self.active_precursors.tolist()
+        info = {
+            'feat_type': self._feat_type,
+            'by_fraction': self._by_fraction,
+            'norm': self._norm,
+            'active_precursors': self.active_precursors,
+        }
+        with open(path, 'w') as f:
+            json.dump(info, f, indent=4)
+    
+    def load(self, path):
+        with open(path, 'r') as f:
+            info = json.load(f)
+        self.__init__(feat_type = info['feat_type'],
+                      by_fraction = info['by_fraction'],
+                      norm = info['norm'])
+        self.update(info['active_precursors'])
+
+    def _check_valid_precursor(self, precursor):
+        if isinstance(precursor, int) and precursor < self.NUM_LABEL:
+            i = precursor
+        elif isinstance(precursor, str) and precursor in self.label_to_precursor:
+            i = self.precursor_to_label[precursor]
+        elif isinstance(precursor, dict) and composit_parser(precursor) in self.label_to_precursor:
+            i = self.precursor_to_label[composit_parser(precursor)]
+        else:
+            print("Unknown precursor: ", precursor)
+            return None
+        return i
+
+    def get_precursor_data(self, precursor):
+        i = self._check_valid_precursor(precursor)
+        if i is None:
+            return None, None
+        return i, self.embedding[i]
+
+    def get_precursor_info(self, precursor):
+        i = self._check_valid_precursor(precursor)
+        if i is None:
+            return None, None
+        j = self.label_to_source[i]
+        return i, self.precursor_source[j]
+
+    def to_dict(self):
+        return {
+            'feature_type': self._feat_type, 
+            'EOS_LABEL': self.EOS_LABEL, 
+            'SOS_LABEL': self.SOS_LABEL, 
+            'NUM_LABEL': self.NUM_LABEL,
+        }

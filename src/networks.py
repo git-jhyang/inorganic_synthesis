@@ -1,5 +1,4 @@
 from typing import Dict, Iterable, List
-from .feature import EOS_LABEL, SOS_LABEL, NUM_LABEL
 import torch_geometric as pyg
 import torch, os, pickle
 import numpy as np
@@ -247,7 +246,7 @@ class GraphConvolutionBlock(BaseNetwork):
 class TransformerDecoderBlock(BaseNetwork):
     def __init__(self,
                  context_dim:int,
-                 vocab_dim:int = NUM_LABEL, 
+                 vocab_dim:int, 
                  embedding:Iterable = None,
                  num_heads:int = 4,
                  hidden_dim:int = 32,
@@ -266,7 +265,6 @@ class TransformerDecoderBlock(BaseNetwork):
                 embedding = embedding.cpu().numpy()
             else:
                 embedding = np.array(embedding)
-
         super().__init__(context_dim = context_dim,
                          vocab_dim = vocab_dim,
                          embedding = embedding,
@@ -280,6 +278,7 @@ class TransformerDecoderBlock(BaseNetwork):
                          negative_slope = negative_slope,
         )
 
+        self.vocab_dim = vocab_dim
         try:
             activation = eval(f'torch.nn.{activation}({negative_slope})')
         except:
@@ -332,7 +331,7 @@ class TransformerDecoderBlock(BaseNetwork):
         return out
     
     def generate(self, context, max_len=20, *args, **kwargs):
-        output_seq = torch.ones(context.shape[0], 1).long().to(self.device) * SOS_LABEL
+        output_seq = torch.ones(context.shape[0], 1).long().to(self.device) + self.vocab_dim 
         for _ in range(max_len):
             output = self.forward(output_seq, context)
             output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])

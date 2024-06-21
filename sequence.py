@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from src.data import ReactionDataset
 from src.trainer import SequenceTrainer
-from src.networks import TransformerDecoderBlock
+from src.networks import TransformerDecoderBlock, LSTMDecoderBlock
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -19,6 +19,7 @@ parser.add_argument('--shuffle_sequence', action='store_true')
 parser.add_argument('--sequence_length', default=8, type=int)
 parser.add_argument('--weighted_loss', action='store_true')
 
+parser.add_argument('--model_archi', choices=['transformer','lstm'], default='transformer')
 parser.add_argument('--heads', default=4, type=int)
 parser.add_argument('--hidden_dim', default=64, type=int)
 parser.add_argument('--hidden_layers', default=2, type=int)
@@ -42,8 +43,8 @@ def main(args):
     else:
         args.data_type = 'c'
 
-    identifier = '{}rxn/{:s}_EOS{}_{}{}{}_Head{:1d}_Dim{:03d}_Lay{:1d}_Bat{:03d}'.format(
-        args.data_type, args.feature_type, args.include_eos, 
+    identifier = '{}rxn/{}_{:s}_EOS{}_{}{}{}_Head{:1d}_Dim{:03d}_Lay{:1d}_Bat{:03d}'.format(
+        args.data_type, args.model_archi, args.feature_type, args.include_eos, 
         'rS' if args.shuffle_sequence else 'oS', 
         'W' if args.weighted_loss else 'uW',
         'PE' if args.positional_encoding else 'nPE', 
@@ -51,7 +52,7 @@ def main(args):
         args.batch_size, 
     )
 
-    output_path = f'/home/jhyang/WORKSPACES/MODELS/isyn/tfdec/{identifier}'
+    output_path = f'/home/jhyang/WORKSPACES/MODELS/isyn/sequence/{identifier}'
     if os.path.isdir(output_path):
         print("Folder already exists")
         return
@@ -73,7 +74,7 @@ def main(args):
         DS.from_file('./data/screened_conditional_reaction.pkl.gz', 
                      heat_temp_key=('heat_temp','median'))
     DS.precursor_dataset.save(output_path)
-    
+
     years = np.array([d.year for d in DS])
     train_mask = years < 2016
     valid_mask = (years >= 2016) & (years < 2018)
@@ -83,13 +84,20 @@ def main(args):
     valid_dl = DataLoader(DS, batch_size=4096, sampler=np.where(valid_mask)[0], collate_fn=DS.cfn)
     test_dl  = DataLoader(DS, batch_size=4096, sampler=np.where(test_mask)[0], collate_fn=DS.cfn)
 
-    model = TransformerDecoderBlock(vocab_dim = DS.NUM_LABEL,
-                                    feature_dim = DS.num_precursor_feat,
-                                    context_dim = DS.num_condition_feat, 
-                                    num_heads = args.heads, 
-                                    hidden_dim = args.hidden_dim, 
-                                    hidden_layers = args.hidden_layers,
-                                    positional_encoding = args.positional_encoding)
+    if args.model_archi == 'transformer':
+        model = TransformerDecoderBlock(feature_dim = DS.num_precursor_feat,
+                                        context_dim = DS.num_condition_feat,
+                                        output_dim = DS.NUM_LABEL,
+                                        num_heads = args.heads,
+                                        hidden_dim = args.hidden_dim,
+                                        hidden_layers = args.hidden_layers,
+                                        positional_encoding = args.positional_encoding)
+    elif args.model_archi == 'lstm':
+        model = LSTMDecoderBlock(feature_dim = DS.num_precursor_feat,
+                                 context_dim = DS.num_condition_feat,
+                                 output_dim = DS.NUM_LABEL,
+                                 hidden_dim = args.hidden_dim,
+                                 hidden_layers = args.hidden_layers)
 
     trainer = SequenceTrainer(model, 1e-3)
     best_loss = 1e5

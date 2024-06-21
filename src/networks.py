@@ -335,7 +335,7 @@ class TransformerDecoderBlock(BaseNetwork):
     def save(self, path, prefix, overwrite=True):
         self._save(path, f'{prefix}.model', overwrite)
 
-class LSTMDecoder(BaseNetwork):
+class LSTMDecoderBlock(BaseNetwork):
     def __init__(self,
                  feature_dim:int,
                  context_dim:int,

@@ -1,9 +1,10 @@
-from .utils import ActiveElements, NEAR_ZERO, composit_parser
+from .utils import ActiveElements, AllElements, NEAR_ZERO, composit_parser
 import numpy as np
 import json, os, gzip, pickle
 
 ATOM_EXCEPTION_WARNING = 'Warning: element [{}] is not included in feature type "{}"\n'
-FEAT_EXCEPTION_WARNING = 'Warning: feature type [{}] is not supported. '
+FEAT_EXCEPTION_WARNING = 'feature type [{}] is not supported. '
+EXCEPTION_ELEMENTS = []
 
 elmd = {}
 for k in ['cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliynyk_sc']:
@@ -35,23 +36,28 @@ def composition_to_feature(composit_dict,
         for ele, frac in composit_dict.items():
             if ele in elmd[feature_type].keys():
                 vec.append(np.array(elmd[feature_type][ele]) * (frac if by_fraction else 1) * div)
-            elif ATOM_EXCEPTION_WARNING is not None:
+            elif ele not in EXCEPTION_ELEMENTS:
                 print(ATOM_EXCEPTION_WARNING.format(ele, feature_type))
-        ATOM_EXCEPTION_WARNING = None
+                EXCEPTION_ELEMENTS.append(ele)
         return np.sum(vec, 0).astype(dtype).reshape(1,-1)
+    elif feature_type.startswith('comp'):
+        if 'ext' in feature_type:
+            return active_composit_feature(composit_dict, ref=AllElements, dtype=dtype, by_fraction=by_fraction).reshape(1,-1) * div
+        return active_composit_feature(composit_dict, dtype=dtype, by_fraction=by_fraction).reshape(1,-1) * div
     else:
-        if not feature_type.startswith('compo') and FEAT_EXCEPTION_WARNING is not None:
-            print(FEAT_EXCEPTION_WARNING.format(feature_type))
-            print('Possible feature types:', ['composit'] + list(elmd.keys()))
-            print('Feature type is set to composit')
-            FEAT_EXCEPTION_WARNING = None
-        return active_composit_feature(composit_dict, dtype, by_fraction,).reshape(1,-1) * div
+        raise ValueError(FEAT_EXCEPTION_WARNING.format(feature_type), 
+                         'Possible feature types:', ['composit','composit_extended'] + list(elmd.keys()),
+                         'Feature type is set to composit')
 
-def active_composit_feature(composit_dict, dtype=float, by_fraction=True, *args, **kwargs):
-    feat_vec = np.zeros(len(ActiveElements), dtype=dtype)
+def active_composit_feature(composit_dict, ref=ActiveElements, dtype=float, by_fraction=True, *args, **kwargs):
+    feat_vec = np.zeros(len(ref), dtype=dtype)
     for ele, frac in composit_dict.items():
         if frac <= NEAR_ZERO: continue
-        feat_vec[ActiveElements.index(ele)] = frac if by_fraction else 1
+        if ele in ref:
+            feat_vec[ref.index(ele)] = frac if by_fraction else 1
+        elif ele not in EXCEPTION_ELEMENTS:
+            print(ATOM_EXCEPTION_WARNING.format(ele, 'composit'))
+            EXCEPTION_ELEMENTS.append(ele)
     return feat_vec
 
 # def metal_composit_feature(composit_dict, dtype=float, by_fraction=True, *args, **kwargs):
@@ -189,7 +195,7 @@ class PrecursorDataset:
         self.label_to_source = np.array(self.label_to_source)
         self.embedding = np.vstack(self.embedding)
         
-    def save(self, path):
+    def save(self, path, fn='precursor_data.json'):
         if isinstance(self.active_precursors, np.ndarray):
             self.active_precursors = self.active_precursors.tolist()
         info = {
@@ -198,11 +204,11 @@ class PrecursorDataset:
             'norm': self._norm,
             'active_precursors': self.active_precursors,
         }
-        with open(path, 'w') as f:
+        with open(os.path.join(path, fn), 'w') as f:
             json.dump(info, f, indent=4)
     
-    def load(self, path):
-        with open(path, 'r') as f:
+    def load(self, path, fn='precursor_data.json'):
+        with open(os.path.join(path, fn), 'r') as f:
             info = json.load(f)
         self.__init__(feat_type = info['feat_type'],
                       by_fraction = info['by_fraction'],

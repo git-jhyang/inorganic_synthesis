@@ -247,7 +247,7 @@ class TransformerDecoderBlock(BaseNetwork):
     def __init__(self,
                  feature_dim:int,
                  context_dim:int,
-                 vocab_dim:int, 
+                 output_dim:int, 
                  num_heads:int = 4,
                  hidden_dim:int = 32,
                  ff_dim_mul:int = 2,
@@ -259,11 +259,13 @@ class TransformerDecoderBlock(BaseNetwork):
                  negative_slope:float = 0.1,
                  ):
         
-        super().__init__(context_dim = context_dim,
-                         vocab_dim = vocab_dim,
+        super().__init__(feature_dim = feature_dim,
+                         context_dim = context_dim,
+                         output_dim = output_dim,
                          num_heads = num_heads,
                          hidden_dim = hidden_dim,
-                         hidden_layers = hidden_layers,
+                         ff_dim_mul = ff_dim_mul,
+                         hidden_layers = hidden_layers, 
                          positional_encoding = positional_encoding,
                          batch_norm = batch_norm,
                          dropout = dropout,
@@ -271,7 +273,7 @@ class TransformerDecoderBlock(BaseNetwork):
                          negative_slope = negative_slope,
         )
 
-        self.vocab_dim = vocab_dim
+        self.output_dim = output_dim
         try:
             activation = eval(f'torch.nn.{activation}({negative_slope})')
         except:
@@ -303,7 +305,7 @@ class TransformerDecoderBlock(BaseNetwork):
             num_layers = hidden_layers, 
 #            norm = torch.nn.BatchNorm1d(hidden_dim) if batch_norm else None,
         )
-        self.output_layer = torch.nn.Linear(hidden_dim, vocab_dim)
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x, context, *args, **kwargs):
         n = x.shape[1]
@@ -318,11 +320,10 @@ class TransformerDecoderBlock(BaseNetwork):
         return out
     
     def generate(self, context, embed_fn, max_len=20, *args, **kwargs):
-        output_seq = - torch.ones(context.shape[0], 1).long() + self.vocab_dim 
+        output_seq = - torch.ones(context.shape[0], 1).long() + self.output_dim 
         for _ in range(max_len):
             embed = embed_fn(output_seq).to(self.device)
             output = self.forward(embed, context)
-            print(output.argmax(-1)[:, -1:])
             output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])
         return output_seq.cpu().numpy()[:, 1:]
 
@@ -330,6 +331,72 @@ class TransformerDecoderBlock(BaseNetwork):
         super().to(*args, **kwargs)
         if self.positional_encoding:
             self.positional_encoding.pe = self.positional_encoding.pe.to(*args, **kwargs)
+
+    def save(self, path, prefix, overwrite=True):
+        self._save(path, f'{prefix}.model', overwrite)
+
+class LSTMDecoder(BaseNetwork):
+    def __init__(self,
+                 feature_dim:int,
+                 context_dim:int,
+                 output_dim:int, 
+                 hidden_dim:int = 32,
+                 hidden_layers:int = 4,
+                 dropout = 0.2,
+                 activation:str = 'LeakyReLU',
+                 negative_slope:float = 0.1,
+                 ):
+        
+        super().__init__(feature_dim = feature_dim,
+                         context_dim = context_dim,
+                         output_dim = output_dim,
+                         hidden_dim = hidden_dim,
+                         hidden_layers = hidden_layers,
+                         dropout = dropout,
+                         activation = activation,
+                         negative_slope = negative_slope,
+        )
+
+        self.output_dim = output_dim
+        try:
+            activation = eval(f'torch.nn.{activation}({negative_slope})')
+        except:
+            activation = eval(f'torch.nn.{activation}()')
+
+        self.feature_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(feature_dim, hidden_dim),
+            torch.nn.Dropout(dropout),
+            activation,            
+        )
+
+        self.context_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(context_dim, hidden_dim),
+            torch.nn.Dropout(dropout),
+            activation,
+        )
+
+        self.lstm_layer = torch.nn.LSTM(input_size = hidden_dim * 2, 
+                                        hidden_size = hidden_dim, 
+                                        num_layers = hidden_layers, 
+                                        batch_first=True, dropout=dropout)
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x, context, *args, **kwargs):
+        n = x.shape[1]
+        x_embed = self.feature_embed_layer(x)
+        c_embed = self.context_embed_layer(context).unsqueeze(1).repeat(1, n, 1)
+        inp = torch.concat([c_embed, x_embed], dim=-1)
+        h, _ = self.lstm_layer(inp)
+        out = self.output_layer(h)
+        return out
+    
+    def generate(self, context, embed_fn, max_len=20, *args, **kwargs):
+        output_seq = - torch.ones(context.shape[0], 1).long() + self.output_dim 
+        for _ in range(max_len):
+            embed = embed_fn(output_seq).to(self.device)
+            output = self.forward(embed, context)
+            output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])
+        return output_seq.cpu().numpy()[:, 1:]
 
     def save(self, path, prefix, overwrite=True):
         self._save(path, f'{prefix}.model', overwrite)

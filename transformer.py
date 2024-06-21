@@ -72,7 +72,8 @@ def main(args):
     else:
         DS.from_file('./data/screened_conditional_reaction.pkl.gz', 
                      heat_temp_key=('heat_temp','median'))
-
+    DS.precursor_dataset.save(output_path)
+    
     years = np.array([d.year for d in DS])
     train_mask = years < 2016
     valid_mask = (years >= 2016) & (years < 2018)

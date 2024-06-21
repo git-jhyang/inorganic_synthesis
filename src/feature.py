@@ -136,8 +136,8 @@ class PrecursorDataset:
         self._by_fraction = by_fraction
         self._norm = norm
 
-#        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz')
-        path = '../data/screened_precursor.pkl.gz'
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz')
+#        path = '../data/screened_precursor.pkl.gz'
 
         with gzip.open(path, 'rb') as f:
             self.precursor_source = pickle.load(f)

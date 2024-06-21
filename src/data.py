@@ -393,6 +393,9 @@ class ReactionDataset(BaseDataset):
     def SOS_LABEL(self):
         return self.precursor_dataset.SOS_LABEL
 
+    def get_embedding(self, x):
+        return torch.from_numpy(self.precursor_dataset.embedding[x]).float()
+
     def from_file(self, data_path, extend_dataset=False, 
                   target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
                   heat_temp_key=None, heat_time_key=None, info_attrs=[], 
@@ -525,7 +528,7 @@ class ReactionDataset(BaseDataset):
         weights = torch.concat(weights).reshape(-1,1).repeat(1, N-1).reshape(-1).float()
         mask = torch.from_numpy(np.vstack(mask)).bool()
 
-        target = labels[:, :N-1]
+#        target = labels[:, :N-1]
         label = labels[:, 1:].reshape(-1)
         mask = torch.from_numpy(np.vstack(mask)).bool()
 
@@ -537,8 +540,8 @@ class ReactionDataset(BaseDataset):
             mask = torch.ones_like(label).bool()
 
         return {
-            'target': target,
-            'precursor_feat': prec_feats,
+#            'target': target,
+            'x': prec_feats,
             'label': label,
             'context': conditions,
             'weight': weights,

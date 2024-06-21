@@ -1,5 +1,5 @@
 import multiprocessing as mp
-import seq_crxn as R
+import transformer as R
 import numpy as np
 
 param_dict = {
@@ -14,6 +14,7 @@ param_dict = {
 }
 
 def exc(i):
+    R.args.data_type = 'u'
     np.random.seed(i)
     for k, v in param_dict.items():
         setattr(R.args, k, v[np.random.randint(0, len(v))])
@@ -21,6 +22,6 @@ def exc(i):
     R.main(R.args)
 
 with mp.Pool(2) as pool:
-    pool.map(exc, [i for i in range(600)])
+    pool.map(exc, [i for i in range(300)])
 #for i in range(10):
 #    print(exc(i))

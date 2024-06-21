@@ -2,7 +2,6 @@ import os, pickle
 import torch
 import numpy as np
 from src.data import ReactionDataset
-from src.feature import EOS_LABEL
 from src.trainer import SequenceTrainer
 from src.networks import TransformerDecoderBlock
 from sklearn.metrics import accuracy_score, f1_score
@@ -12,6 +11,8 @@ from torch.utils.tensorboard import SummaryWriter
 from argparse import ArgumentParser
 
 parser  =  ArgumentParser()
+parser.add_argument('--data_type', default='unique', type=str)
+
 parser.add_argument('--feature_type', default='composit', type=str)
 parser.add_argument('--include_eos', default=1, type=int)
 parser.add_argument('--shuffle_sequence', action='store_true')
@@ -36,9 +37,13 @@ torch.set_float32_matmul_precision('high')
 def main(args):
     if args.include_eos not in [0,1]:
         args.include_eos = 'all'
+    if args.data_type.startswith('u'):
+        args.data_type = 'u'
+    else:
+        args.data_type = 'c'
 
-    identifier = 'crxn/{:s}_EOS{}_{}{}{}_Head{:1d}_Dim{:03d}_Lay{:1d}_Bat{:03d}'.format(
-        args.feature_type, args.include_eos, 
+    identifier = '{}rxn/{:s}_EOS{}_{}{}{}_Head{:1d}_Dim{:03d}_Lay{:1d}_Bat{:03d}'.format(
+        args.data_type, args.feature_type, args.include_eos, 
         'rS' if args.shuffle_sequence else 'oS', 
         'W' if args.weighted_loss else 'uW',
         'PE' if args.positional_encoding else 'nPE', 
@@ -57,12 +62,16 @@ def main(args):
         print(output_path)
 
     DS = ReactionDataset(feat_type = args.feature_type,
-                        include_eos = args.include_eos, 
-                        shuffle_sequence = args.shuffle_sequence,
-                        sequence_length = args.sequence_length,
-                        weights = args.weighted_loss)
+                         include_eos = args.include_eos, 
+                         shuffle_sequence = args.shuffle_sequence,
+                         sequence_length = args.sequence_length,
+                         weights = args.weighted_loss)
     
-    DS.from_file('./data/screened_conditional_reaction.pkl.gz', heat_temp_key=('heat_temp','median'))
+    if args.data_type == 'u':
+        DS.from_file('./data/screened_unique_reaction.pkl.gz')
+    else:
+        DS.from_file('./data/screened_conditional_reaction.pkl.gz', 
+                     heat_temp_key=('heat_temp','median'))
 
     years = np.array([d.year for d in DS])
     train_mask = years < 2016
@@ -73,13 +82,14 @@ def main(args):
     valid_dl = DataLoader(DS, batch_size=4096, sampler=np.where(valid_mask)[0], collate_fn=DS.cfn)
     test_dl  = DataLoader(DS, batch_size=4096, sampler=np.where(test_mask)[0], collate_fn=DS.cfn)
 
-    model = TransformerDecoderBlock(context_dim = DS.num_condition_feat, 
+    model = TransformerDecoderBlock(vocab_dim = DS.NUM_LABEL,
+                                    feature_dim = DS.num_precursor_feat,
+                                    context_dim = DS.num_condition_feat, 
                                     num_heads = args.heads, 
                                     hidden_dim = args.hidden_dim, 
                                     hidden_layers = args.hidden_layers,
                                     positional_encoding = args.positional_encoding)
 
-    model.to('cuda')
     trainer = SequenceTrainer(model, 1e-3)
     best_loss = 1e5
     count = 0
@@ -96,8 +106,8 @@ def main(args):
                 pred = output['pred'].argmax(-1)
                 n_data, l_seq = pred.shape
                 label = output['label']
-                mask = np.hstack([np.ones((n_data, 1), dtype=bool), (label != EOS_LABEL)[..., :-1]]).reshape(-1)
-                acc = accuracy_score(label.reshape(-1)[mask], pred.reshape(-1)[mask])                
+                mask = np.hstack([np.ones((n_data, 1), dtype=bool), (label != DS.EOS_LABEL)[..., :-1]]).reshape(-1)
+                acc = accuracy_score(label.reshape(-1)[mask], pred.reshape(-1)[mask])
                 f1_mi = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='micro')
                 f1_ma = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='macro')
                 hit_rxn = np.array([(p[m] != l[m]).sum() == 0 for p, l, m in zip(pred, label, mask)]).astype(float).mean()

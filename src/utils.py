@@ -144,3 +144,15 @@ def screening_reactions_by_freq(reactions, precursors, minimum_frequency=5):
         return screening_reactions_by_freq(screened_reaction, screened_precursor, minimum_frequency)
     else:
         return screened_reaction, screened_precursor
+
+def sequence_output_metrics(pred, label):
+    if len(pred.shape) != len(label.shape):
+        pred = pred.argmax(-1)
+    N, S = pred.shape
+    sorted(np.unique(label.reshape(N, S)[:, -1], return_counts=True), key=lambda x: x[1])
+
+    mask = np.hstack([np.ones((N, 1), dtype=bool), (label != DS.EOS_LABEL)[..., :-1]]).reshape(-1)
+    acc = accuracy_score(label.reshape(-1)[mask], pred.reshape(-1)[mask])
+    f1_mi = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='micro')
+    f1_ma = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='macro')
+    hit_rxn = np.array([(p[m] != l[m]).sum() == 0 for p, l, m in zip(pred, label, mask)]).astype(float).mean()

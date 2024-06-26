@@ -138,6 +138,8 @@ class ReactionData(BaseData):
         self.condition_feat = composition_to_feature(composit_dict=target_comp, 
                                                      feature_type=feat_type, 
                                                      by_fraction=True)
+        self._feature_attrs.append('precursor_mask')
+        self.precursor_mask = precursor_refs.get_precursor_mask_from_target(target_comp)
 
         # conditions
         if heat_temp is not None:
@@ -228,8 +230,9 @@ class SequenceData(ReactionData):
         EOS, EOS_VEC = precursor_refs.get_precursor_data('EOS')
         SOS, SOS_VEC = precursor_refs.get_precursor_data('SOS')
 
-        if hasattr(self, 'precursor_feat'):
-                
+        self._feature_attrs.append('sequence_mask')
+        sequence_mask = np.zeros((max_length), dtype=bool)
+        if hasattr(self, 'precursor_feat'): 
             self.m = self.labels.shape[0]
             self.precursor_feat = np.vstack([
                 SOS_VEC.reshape(1,-1), self.precursor_feat, np.repeat(EOS_VEC.reshape(1,-1), max_length, axis=0)
@@ -237,11 +240,13 @@ class SequenceData(ReactionData):
             self.labels = np.hstack([
                 [SOS], self.labels.reshape(-1), [EOS] * max_length
             ])[:max_length].astype(int).reshape(1,-1)
+            sequence_mask[:self.m+1] = True
         else:
             self._feature_attrs.append('precursor_feat')
             self._feature_attrs.append('labels')
             self.precursor_feat = SOS_VEC.reshape(1, 1, -1)
             self.labels = np.array([SOS]).reshape(1,-1)
+        self.sequence_mask = sequence_mask.reshape(1,-1)
 
     def shuffle(self):
         if not hasattr(self, 'm'): 
@@ -396,6 +401,10 @@ class ReactionDataset(BaseDataset):
     def get_embedding(self, x):
         return torch.from_numpy(self.precursor_dataset.embedding[x]).float()
 
+    def labels_to_precursor(self, labels):
+        shape = np.array(labels).shape
+        return np.array([self.precursor_dataset.label_to_precursor(l) for l in np.array(labels).reshape(-1)]).reshape(shape)
+
     def from_file(self, data_path, extend_dataset=False, 
                   target_comp_key='target_comp', precursor_comp_key='precursor_comp', 
                   heat_temp_key=None, heat_time_key=None, info_attrs=[], 
@@ -504,21 +513,24 @@ class ReactionDataset(BaseDataset):
         prec_feats = []
         conditions = []
         weights = []
-        mask = []
+        sequence_mask = []
+        precursor_mask = []
+
         N = dataset[0].n
         for data in dataset:
             info.append(data.to_dict())
             conditions.append(data.condition_feat)
-            m = np.zeros(N, dtype=bool)
-            m[:data.m+1] = True
-            mask.append(m.reshape(1,-1))
+            sequence_mask.append(data.sequence_mask)
+            precursor_mask.append(data.precursor_mask)
             weights.append(data.weights)
 
-            if self._shuffle_sequence:
+        if self._shuffle_sequence:
+            for data in dataset:
                 prec_feat, label = data.shuffle()
                 labels.append(label)
                 prec_feats.append(prec_feat)
-            else:
+        else:
+            for data in dataset:
                 labels.append(data.labels)
                 prec_feats.append(data.precursor_feat)
 
@@ -526,26 +538,29 @@ class ReactionDataset(BaseDataset):
         prec_feats = torch.concat(prec_feats).float()[:, :N-1]
         conditions = torch.concat(conditions).float()
         weights = torch.concat(weights).reshape(-1,1).repeat(1, N-1).reshape(-1).float()
-        mask = torch.from_numpy(np.vstack(mask)).bool()
+        sequence_mask = torch.concat(sequence_mask).bool()
+        precursor_mask = torch.concat(precursor_mask).bool().unsqueeze(1)
 
 #        target = labels[:, :N-1]
         label = labels[:, 1:].reshape(-1)
-        mask = torch.from_numpy(np.vstack(mask)).bool()
+        neg_label = torch.concat([labels[:, -1:], labels[:, 1:-1]], -1).reshape(-1)
 
         if self._include_eos == 0:
-            mask = mask[:, 1:].reshape(-1)
+            sequence_mask = sequence_mask[:, 1:].reshape(-1)
         elif self._include_eos == 1:
-            mask = mask[:, :N-1].reshape(-1)
+            sequence_mask = sequence_mask[:, :N-1].reshape(-1)
         else:
-            mask = torch.ones_like(label).bool()
+            sequence_mask = torch.ones_like(label).bool()
 
         return {
 #            'target': target,
             'x': prec_feats,
             'label': label,
+            'neg_label': neg_label,
             'context': conditions,
             'weight': weights,
-            'mask': mask,
+            'sequence_mask': sequence_mask,
+            'precursor_mask': precursor_mask,
         }, info
     
 #    def _cfn(self, dataset):

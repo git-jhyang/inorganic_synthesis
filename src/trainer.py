@@ -170,10 +170,11 @@ class SequenceTrainer(BaseTrainer):
         _feat, _ = batch
         feat = {k:v.to(self.device) for k,v in _feat.items()}
         pred = self.model(**feat)
+        B, S, L = pred.shape
         if compute_loss:
-            _loss = self.crit(pred.view(feat['label'].shape[0], -1), feat['label'])[feat['mask']]
+            _loss = self.crit(pred.view(B * S, -1), feat['label']) * feat['weight']
 #            print(_loss.shape, feat['weight'].shape, feat['mask'].shape)
-            loss = (_loss * feat['weight'][feat['mask']]).mean()
+            loss = (_loss * feat['weight'][feat['sequence_mask']]).mean()
             return loss, pred.detach().cpu().numpy()
         else:
             return pred.detach().cpu().numpy()

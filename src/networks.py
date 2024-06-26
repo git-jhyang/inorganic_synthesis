@@ -309,10 +309,10 @@ class TransformerDecoderBlock(BaseNetwork):
 
     def forward(self, x, context, *args, **kwargs):
         n = x.shape[1]
-        x_mask = torch.nn.Transformer.generate_square_subsequent_mask(n)
+        x_mask = torch.nn.Transformer.generate_square_subsequent_mask(n).to(self.device)
         x_embed = self.feature_embed_layer(x)
         if self.positional_encoding: 
-            x_embed += self.positional_encoding(n)
+            x_embed += self.positional_encoding(n).to(self.device)
         context_embed = self.context_embed_layer(context).unsqueeze(1)#.repeat(1, n, 1)
 
         h = self.transformer_decoder(x_embed, context_embed, tgt_mask=x_mask)

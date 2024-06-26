@@ -1,6 +1,6 @@
-from .utils import ActiveElements, AllElements, NEAR_ZERO, composit_parser
+from .utils import ActiveElements, AllElements, NEAR_ZERO, MetalElements, composit_parser
 import numpy as np
-import json, os, gzip, pickle
+import json, os, gzip, pickle, numbers
 
 ATOM_EXCEPTION_WARNING = 'Warning: element [{}] is not included in feature type "{}"\n'
 FEAT_EXCEPTION_WARNING = 'feature type [{}] is not supported. '
@@ -151,7 +151,7 @@ class PrecursorDataset:
         self.update()
 
     def update(self, active_precursors=None):
-        if isinstance(active_precursors, (list, np.ndarray)):
+        if isinstance(active_precursors, (list, np.ndarray, tuple, set)):
             self.active_precursors = active_precursors
 
         self.label_to_precursor = []
@@ -159,6 +159,8 @@ class PrecursorDataset:
         self.precursor_to_label = {}
         self.source_to_label = -np.ones(len(self.precursor_source) + 2, dtype=int)
         self.embedding = []
+
+        # parsing data based on new precursor set
         for i, prec in enumerate(self.precursor_source):
             pstr = prec['precursor_str']
             if pstr not in self.active_precursors:
@@ -174,6 +176,20 @@ class PrecursorDataset:
                                                          norm = self._norm))
 
         self.NUM_LABEL = len(self.label_to_precursor) + 2
+
+        # make metal-precursor mask
+        precursor_mask = np.zeros((len(MetalElements) + 1, self.NUM_LABEL), dtype=int)
+        for i,j in enumerate(self.label_to_source):
+            for ele in self.precursor_source[j]['precursor_comp'].keys():
+                if ele not in MetalElements:
+                    continue
+                k = MetalElements.index(ele)
+                precursor_mask[k, i] = 1
+            if precursor_mask[:, i].sum() == 0:
+                precursor_mask[-1, i] = 1
+        self.precursor_mask = precursor_mask.astype(bool)
+
+        # set EOS
         i = len(self.precursor_source)
         j = len(self.label_to_precursor)
 
@@ -183,7 +199,9 @@ class PrecursorDataset:
         self.precursor_to_label.update({'EOS':j})
         self.source_to_label[i] = j
         self.embedding.append(np.zeros_like(self.embedding[0]))
+        self.precursor_mask[-1, j] = True
 
+        # set SOS
         self.SOS_LABEL = j + 1
         self.label_to_precursor.append('SOS')
         self.label_to_source.append(i + 1)
@@ -196,8 +214,8 @@ class PrecursorDataset:
         self.embedding = np.vstack(self.embedding)
         
     def save(self, path, fn='precursor_data.json'):
-        if isinstance(self.active_precursors, np.ndarray):
-            self.active_precursors = self.active_precursors.tolist()
+        self.active_precursors = list(self.active_precursors)
+
         info = {
             'feat_type': self._feat_type,
             'by_fraction': self._by_fraction,
@@ -216,8 +234,12 @@ class PrecursorDataset:
         self.update(info['active_precursors'])
 
     def _check_valid_precursor(self, precursor):
-        if isinstance(precursor, int) and precursor < self.NUM_LABEL:
-            i = precursor
+        if isinstance(precursor, numbers.Integral):
+            if precursor < self.NUM_LABEL:
+                i = precursor
+            else:
+                print('Exceeding maximum precursor index', self.NUM_LABEL-1)
+                return None
         elif isinstance(precursor, str) and precursor in self.label_to_precursor:
             i = self.precursor_to_label[precursor]
         elif isinstance(precursor, dict) and composit_parser(precursor) in self.label_to_precursor:
@@ -239,6 +261,13 @@ class PrecursorDataset:
             return None, None
         j = self.label_to_source[i]
         return i, self.precursor_source[j]
+
+    def get_precursor_mask_from_target(self, target):
+        mask = self.precursor_mask[-1].copy()
+        for ele in target.keys():
+            if ele in MetalElements:
+                mask = mask | self.precursor_mask[MetalElements.index(ele)]
+        return mask.reshape(1,-1)
 
     def to_dict(self):
         return {

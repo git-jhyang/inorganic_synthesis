@@ -262,12 +262,19 @@ class PrecursorDataset:
         j = self.label_to_source[i]
         return i, self.precursor_source[j]
 
-    def get_precursor_mask_from_target(self, target):
+    def get_precursor_mask_from_target_v1(self, target):
         mask = self.precursor_mask[-1].copy()
         for ele in target.keys():
             if ele in MetalElements:
                 mask = mask | self.precursor_mask[MetalElements.index(ele)]
         return mask.reshape(1,-1)
+
+    def get_precursor_mask_from_target_v2(self, target):
+        mask = []
+        for i, ele in enumerate(MetalElements):
+            if ele in target.keys():
+                mask.append(self.precursor_mask[i])
+        return mask
 
     def to_dict(self):
         return {

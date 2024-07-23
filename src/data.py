@@ -138,8 +138,9 @@ class ReactionData(BaseData):
         self.condition_feat = composition_to_feature(composit_dict=target_comp, 
                                                      feature_type=feat_type, 
                                                      by_fraction=True)
+
         self._feature_attrs.append('precursor_mask')
-        self.precursor_mask = precursor_refs.get_precursor_mask_from_target(target_comp)
+        self.precursor_mask = precursor_refs.get_precursor_mask_from_target_v1(target_comp)
 
         # conditions
         if heat_temp is not None:
@@ -255,6 +256,8 @@ class SequenceData(ReactionData):
         i = np.arange(self.n)
         i[1:self.m + 1] = j + 1
         return self.precursor_feat[:, i], self.labels[:, i]
+
+
 
 ################################################################################################
 ################################################################################################
@@ -538,7 +541,9 @@ class ReactionDataset(BaseDataset):
         prec_feats = torch.concat(prec_feats).float()[:, :N-1]
         conditions = torch.concat(conditions).float()
         weights = torch.concat(weights).reshape(-1,1).repeat(1, N-1).reshape(-1).float()
+        # evade overfitting to EOS
         sequence_mask = torch.concat(sequence_mask).bool()
+        # for fast convergence
         precursor_mask = torch.concat(precursor_mask).bool().unsqueeze(1)
 
 #        target = labels[:, :N-1]

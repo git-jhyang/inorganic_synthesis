@@ -175,6 +175,7 @@ class GraphData(ReactionData):
                          *args, **kwargs)
 
         # graph 
+        self.precursor_mask = precursor_refs.get_precursor_mask_from_target_v2(target_comp)
         self._feature_attrs.extend(['edge_feat','edge_index'])
         edge_index = []
         edge_feat = []

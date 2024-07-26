@@ -46,7 +46,7 @@ def composition_to_feature(composit_dict,
         return active_composit_feature(composit_dict, dtype=dtype, by_fraction=by_fraction).reshape(1,-1) * div
     else:
         raise ValueError(FEAT_EXCEPTION_WARNING.format(feature_type), 
-                         'Possible feature types:', ['composit','composit_extended'] + list(elmd.keys()),
+                         'Possible feature types:', ['composit','composit_ext'] + list(elmd.keys()),
                          'Feature type is set to composit')
 
 def active_composit_feature(composit_dict, ref=ActiveElements, dtype=float, by_fraction=True, *args, **kwargs):
@@ -283,3 +283,4 @@ class PrecursorDataset:
             'SOS_LABEL': self.SOS_LABEL, 
             'NUM_LABEL': self.NUM_LABEL,
         }
+

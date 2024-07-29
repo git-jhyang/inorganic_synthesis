@@ -1,125 +1,28 @@
-multiprocessing.pool.RemoteTraceback: 
-"""
-Traceback (most recent call last):
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 125, in worker
-    result = (True, func(*args, **kwds))
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 48, in mapstar
-    return list(map(*args))
-  File "/mnt/CODES/inorganic_synthesis/execute.py", line 32, in exc
-    R.main(R.args)
-  File "/mnt/CODES/inorganic_synthesis/run_gcvae.py", line 111, in main
-    writer.add_histogram(f'Z/{sfx}', output['z'], epoch)
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/tensorboard/writer.py", line 526, in add_histogram
-    histogram(tag, values, bins, max_bins=max_bins), global_step, walltime
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/tensorboard/summary.py", line 483, in histogram
-    hist = make_histogram(values.astype(float), bins, max_bins)
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/tensorboard/summary.py", line 528, in make_histogram
-    raise ValueError("The histogram is empty, please file a bug report.")
-ValueError: The histogram is empty, please file a bug report.
-"""
+Folder already exists
+Warning: element [Pu] is not included in feature type "oliynyk_sc"
 
-The above exception was the direct cause of the following exception:
+Warning: element [Np] is not included in feature type "oliynyk_sc"
 
-Traceback (most recent call last):
-  File "/mnt/CODES/inorganic_synthesis/execute.py", line 35, in <module>
-    pool.map(exc, [i for i in range(600)])
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 364, in map
-    return self._map_async(func, iterable, mapstar, chunksize).get()
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 771, in get
-    raise self._value
-ValueError: The histogram is empty, please file a bug report.
-multiprocessing.pool.RemoteTraceback: 
-"""
-Traceback (most recent call last):
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 125, in worker
-    result = (True, func(*args, **kwds))
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 48, in mapstar
-    return list(map(*args))
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute.py", line 32, in exc
-    R.main(R.args)
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/run_gcvae_class.py", line 112, in main
-    writer.add_histogram(f'Z/{sfx}', output['z'], epoch)
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/tensorboard/writer.py", line 526, in add_histogram
-    histogram(tag, values, bins, max_bins=max_bins), global_step, walltime
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/tensorboard/summary.py", line 483, in histogram
-    hist = make_histogram(values.astype(float), bins, max_bins)
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/tensorboard/summary.py", line 528, in make_histogram
-    raise ValueError("The histogram is empty, please file a bug report.")
-ValueError: The histogram is empty, please file a bug report.
-"""
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute.py", line 35, in <module>
-    pool.map(exc, [i for i in range(600)])
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 364, in map
-    return self._map_async(func, iterable, mapstar, chunksize).get()
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 771, in get
-    raise self._value
-ValueError: The histogram is empty, please file a bug report.
-multiprocessing.pool.RemoteTraceback: 
-"""
-Traceback (most recent call last):
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 125, in worker
-    result = (True, func(*args, **kwds))
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 48, in mapstar
-    return list(map(*args))
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute_tf.py", line 20, in exc
-    R.main(R.args)
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/run_transf.py", line 87, in main
-    train_loss = trainer.train(train_dl)
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/trainer.py", line 15, in train
-    for batch in dataloader:
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 439, in __iter__
-    return self._get_iterator()
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 387, in _get_iterator
-    return _MultiProcessingDataLoaderIter(self)
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 1040, in __init__
-    w.start()
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/process.py", line 118, in start
-    assert not _current_process._config.get('daemon'), \
-AssertionError: daemonic processes are not allowed to have children
-"""
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute_tf.py", line 23, in <module>
-    pool.map(exc, [i for i in range(600)])
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 364, in map
-    return self._map_async(func, iterable, mapstar, chunksize).get()
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 771, in get
-    raise self._value
-AssertionError: daemonic processes are not allowed to have children
-multiprocessing.pool.RemoteTraceback: 
-"""
-Traceback (most recent call last):
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 125, in worker
-    result = (True, func(*args, **kwds))
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 48, in mapstar
-    return list(map(*args))
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute_tf.py", line 20, in exc
-    R.main(R.args)
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/run_transf.py", line 72, in main
-    model = TransformerDecoderBlock(context_dim = DS.num_condition_feat,
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/networks.py", line 290, in __init__
-    torch.nn.TransformerDecoderLayer(
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/nn/modules/transformer.py", line 780, in __init__
-    self.self_attn = MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first,
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/site-packages/torch/nn/modules/activation.py", line 991, in __init__
-    assert self.head_dim * num_heads == self.embed_dim, "embed_dim must be divisible by num_heads"
-AssertionError: embed_dim must be divisible by num_heads
-"""
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute_tf.py", line 23, in <module>
-    pool.map(exc, [i for i in range(600)])
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 364, in map
-    return self._map_async(func, iterable, mapstar, chunksize).get()
-  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 771, in get
-    raise self._value
-AssertionError: embed_dim must be divisible by num_heads
-python: can't open file '/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/execute_tf.py': [Errno 2] No such file or directory
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists
+Folder already exists

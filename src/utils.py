@@ -11,14 +11,17 @@ TransitionMetals = 'Sc Ti V Cr Mn Fe Co Ni Cu Zn Y Zr Nb Mo Tc Ru Rh Pd Ag Cd Hf
 PostTransitionMetals = 'Al Ga In Sn Tl Pb Bi Po'.split()
 Metalloids = 'B Si Ge As Sb Te At'.split()
 Lanthanoids = 'La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu'.split()
-Actinoids = 'Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr'.split()
+Actinoids_1 = 'Ac Th Pa U Np Pu'.split()
+Actinoids_2 = 'Am Cm Bk Cf Es Fm Md No Lr'.split() # uncommon actinoids
 Halogens = 'He Ne Ar Kr Xe Rn'.split()
 Unknown = 'Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og'.split()
 
-MetalElements = sorted(AlkaliMetals + AlkaliEarthMetals + TransitionMetals + PostTransitionMetals + Metalloids + Lanthanoids + Actinoids, key=lambda x: Element(x).number)
+MetalElements = sorted(AlkaliMetals + AlkaliEarthMetals + TransitionMetals + PostTransitionMetals + Metalloids + Lanthanoids + Actinoids_1 + Actinoids_2, key=lambda x: Element(x).number)
 LigandElements = sorted(NonMetals, key=lambda x: Element(x).number)
-ActiveElements = sorted(MetalElements + NonMetals, key=lambda x: Element(x).number)
-AllElements = sorted(ActiveElements + Halogens + Unknown, key=lambda x: Element(x).number)
+ActiveElements = sorted(
+    AlkaliMetals + AlkaliEarthMetals + TransitionMetals + PostTransitionMetals + 
+    Metalloids + Lanthanoids + Actinoids_1 + NonMetals, key=lambda x: Element(x).number)
+AllElements = sorted(ActiveElements + Actinoids_2 + Halogens + Unknown, key=lambda x: Element(x).number)
 
 def to_numpy(vector):
     if isinstance(vector, torch.Tensor):
@@ -141,3 +144,15 @@ def screening_reactions_by_freq(reactions, precursors, minimum_frequency=5):
         return screening_reactions_by_freq(screened_reaction, screened_precursor, minimum_frequency)
     else:
         return screened_reaction, screened_precursor
+
+def sequence_output_metrics(pred, label):
+    if len(pred.shape) != len(label.shape):
+        pred = pred.argmax(-1)
+    N, S = pred.shape
+    sorted(np.unique(label.reshape(N, S)[:, -1], return_counts=True), key=lambda x: x[1])
+
+    mask = np.hstack([np.ones((N, 1), dtype=bool), (label != DS.EOS_LABEL)[..., :-1]]).reshape(-1)
+    acc = accuracy_score(label.reshape(-1)[mask], pred.reshape(-1)[mask])
+    f1_mi = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='micro')
+    f1_ma = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='macro')
+    hit_rxn = np.array([(p[m] != l[m]).sum() == 0 for p, l, m in zip(pred, label, mask)]).astype(float).mean()

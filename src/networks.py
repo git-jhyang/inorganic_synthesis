@@ -1,5 +1,4 @@
 from typing import Dict, Iterable, List
-from .feature import EOS_LABEL, SOS_LABEL, NUM_LABEL
 import torch_geometric as pyg
 import torch, os, pickle
 import numpy as np
@@ -246,11 +245,12 @@ class GraphConvolutionBlock(BaseNetwork):
 
 class TransformerDecoderBlock(BaseNetwork):
     def __init__(self,
+                 feature_dim:int,
                  context_dim:int,
-                 vocab_dim:int = NUM_LABEL, 
-                 embedding:Iterable = None,
+                 output_dim:int, 
                  num_heads:int = 4,
                  hidden_dim:int = 32,
+                 ff_dim_mul:int = 2,
                  hidden_layers:int = 2,
                  positional_encoding:bool = True,
                  batch_norm:bool = False,
@@ -259,20 +259,13 @@ class TransformerDecoderBlock(BaseNetwork):
                  negative_slope:float = 0.1,
                  ):
         
-        if embedding is None:
-            pass
-        else:
-            if isinstance(embedding, torch.Tensor):
-                embedding = embedding.cpu().numpy()
-            else:
-                embedding = np.array(embedding)
-
-        super().__init__(context_dim = context_dim,
-                         vocab_dim = vocab_dim,
-                         embedding = embedding,
+        super().__init__(feature_dim = feature_dim,
+                         context_dim = context_dim,
+                         output_dim = output_dim,
                          num_heads = num_heads,
                          hidden_dim = hidden_dim,
-                         hidden_layers = hidden_layers,
+                         ff_dim_mul = ff_dim_mul,
+                         hidden_layers = hidden_layers, 
                          positional_encoding = positional_encoding,
                          batch_norm = batch_norm,
                          dropout = dropout,
@@ -280,27 +273,23 @@ class TransformerDecoderBlock(BaseNetwork):
                          negative_slope = negative_slope,
         )
 
+        self.output_dim = output_dim
         try:
             activation = eval(f'torch.nn.{activation}({negative_slope})')
         except:
             activation = eval(f'torch.nn.{activation}()')
 
-        if embedding is None:
-            self.target_embed_layer = torch.nn.Embedding(vocab_dim, hidden_dim)
-        else:
-            vocab_dim, embedding_dim = embedding.shape
-            embed_layer = torch.nn.Embedding(vocab_dim, embedding_dim)
-            self.target_embed_layer = torch.nn.Sequential(
-                embed_layer.from_pretrained(torch.from_numpy(embedding).float()),
-                torch.nn.Linear(embedding_dim, hidden_dim)
-            )
-
         self.positional_encoding = PositionalEncoding(hidden_dim) if positional_encoding else False
+
+        self.feature_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(feature_dim, hidden_dim),
+            torch.nn.Dropout(dropout),
+            activation,            
+        )
 
         self.context_embed_layer = torch.nn.Sequential(
             torch.nn.Linear(context_dim, hidden_dim),
-            torch.nn.BatchNorm1d(hidden_dim),
-#            torch.nn.Dropout(dropout),
+            torch.nn.Dropout(dropout),
             activation,
         )
 
@@ -308,33 +297,33 @@ class TransformerDecoderBlock(BaseNetwork):
             torch.nn.TransformerDecoderLayer(
                 d_model = hidden_dim,
                 nhead = num_heads,
-                dim_feedforward = hidden_dim * 2,
+                dim_feedforward = hidden_dim * ff_dim_mul,
                 dropout = dropout,
                 activation = activation,
                 batch_first = True,
             ), 
             num_layers = hidden_layers, 
-            norm = torch.nn.BatchNorm1d(hidden_dim) if batch_norm else None,
+#            norm = torch.nn.BatchNorm1d(hidden_dim) if batch_norm else None,
         )
-        self.output_layer = torch.nn.Linear(hidden_dim, vocab_dim)
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, target, context, *args, **kwargs):
-        n = target.shape[1]
-        target_mask = torch.nn.Transformer.generate_square_subsequent_mask(n)
-
-        target_embed = self.target_embed_layer(target) 
+    def forward(self, x, context, *args, **kwargs):
+        n = x.shape[1]
+        x_mask = torch.nn.Transformer.generate_square_subsequent_mask(n).to(self.device)
+        x_embed = self.feature_embed_layer(x)
         if self.positional_encoding: 
-            target_embed += self.positional_encoding(n)
-        context_embed = self.context_embed_layer(context).unsqueeze(1).repeat(1, n, 1)
+            x_embed += self.positional_encoding(n).to(self.device)
+        context_embed = self.context_embed_layer(context).unsqueeze(1)#.repeat(1, n, 1)
 
-        h = self.transformer_decoder(target_embed, context_embed, tgt_mask=target_mask)
+        h = self.transformer_decoder(x_embed, context_embed, tgt_mask=x_mask)
         out = self.output_layer(h)
         return out
     
-    def generate(self, context, max_len=20, *args, **kwargs):
-        output_seq = torch.ones(context.shape[0], 1).long().to(self.device) * SOS_LABEL
+    def generate(self, context, embed_fn, max_len=20, *args, **kwargs):
+        output_seq = - torch.ones(context.shape[0], 1).long() + self.output_dim 
         for _ in range(max_len):
-            output = self.forward(output_seq, context)
+            embed = embed_fn(output_seq).to(self.device)
+            output = self.forward(embed, context)
             output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])
         return output_seq.cpu().numpy()[:, 1:]
 
@@ -342,6 +331,72 @@ class TransformerDecoderBlock(BaseNetwork):
         super().to(*args, **kwargs)
         if self.positional_encoding:
             self.positional_encoding.pe = self.positional_encoding.pe.to(*args, **kwargs)
+
+    def save(self, path, prefix, overwrite=True):
+        self._save(path, f'{prefix}.model', overwrite)
+
+class LSTMDecoderBlock(BaseNetwork):
+    def __init__(self,
+                 feature_dim:int,
+                 context_dim:int,
+                 output_dim:int, 
+                 hidden_dim:int = 32,
+                 hidden_layers:int = 4,
+                 dropout = 0.2,
+                 activation:str = 'LeakyReLU',
+                 negative_slope:float = 0.1,
+                 ):
+        
+        super().__init__(feature_dim = feature_dim,
+                         context_dim = context_dim,
+                         output_dim = output_dim,
+                         hidden_dim = hidden_dim,
+                         hidden_layers = hidden_layers,
+                         dropout = dropout,
+                         activation = activation,
+                         negative_slope = negative_slope,
+        )
+
+        self.output_dim = output_dim
+        try:
+            activation = eval(f'torch.nn.{activation}({negative_slope})')
+        except:
+            activation = eval(f'torch.nn.{activation}()')
+
+        self.feature_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(feature_dim, hidden_dim),
+            torch.nn.Dropout(dropout),
+            activation,            
+        )
+
+        self.context_embed_layer = torch.nn.Sequential(
+            torch.nn.Linear(context_dim, hidden_dim),
+            torch.nn.Dropout(dropout),
+            activation,
+        )
+
+        self.lstm_layer = torch.nn.LSTM(input_size = hidden_dim * 2, 
+                                        hidden_size = hidden_dim, 
+                                        num_layers = hidden_layers, 
+                                        batch_first=True, dropout=dropout)
+        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x, context, *args, **kwargs):
+        n = x.shape[1]
+        x_embed = self.feature_embed_layer(x)
+        c_embed = self.context_embed_layer(context).unsqueeze(1).repeat(1, n, 1)
+        inp = torch.concat([c_embed, x_embed], dim=-1)
+        h, _ = self.lstm_layer(inp)
+        out = self.output_layer(h)
+        return out
+    
+    def generate(self, context, embed_fn, max_len=20, *args, **kwargs):
+        output_seq = - torch.ones(context.shape[0], 1).long() + self.output_dim 
+        for _ in range(max_len):
+            embed = embed_fn(output_seq).to(self.device)
+            output = self.forward(embed, context)
+            output_seq = torch.hstack([output_seq, output.argmax(-1)[:, -1:]])
+        return output_seq.cpu().numpy()[:, 1:]
 
     def save(self, path, prefix, overwrite=True):
         self._save(path, f'{prefix}.model', overwrite)

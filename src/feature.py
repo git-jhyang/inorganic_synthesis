@@ -132,7 +132,7 @@ def active_composit_feature(composit_dict, ref=ActiveElements, dtype=float, by_f
 ################################################################################################
 ################################################################################################
 
-class PrecursorDataset:
+class PrecursorSequenceDataset:
     def __init__(self, 
                  feat_type:str = 'composit',
                  by_fraction:bool = True,
@@ -157,7 +157,7 @@ class PrecursorDataset:
         self.label_to_precursor = []
         self.label_to_source = []
         self.precursor_to_label = {}
-        self.source_to_label = -np.ones(len(self.precursor_source) + 2, dtype=int)
+        self.source_to_label = - np.ones(len(self.precursor_source) + 2, dtype=int)
         self.embedding = []
 
         # parsing data based on new precursor set

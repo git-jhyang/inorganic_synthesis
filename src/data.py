@@ -1,7 +1,7 @@
 import torch, gzip, pickle, json
 import numpy as np
 from .utils import MetalElements, composit_parser
-from .feature import composition_to_feature, PrecursorDataset
+from .feature import composition_to_feature, PrecursorDatasetForSequence
 from typing import Dict, List
 
 class BaseData:
@@ -369,7 +369,7 @@ class ReactionDataset(BaseDataset):
                  include_eos:int = 0,
                  weights:bool = True):
         super().__init__()
-        self.precursor_dataset = PrecursorDataset(feat_type=feat_type,
+        self.precursor_dataset = PrecursorDatasetForSequence(feat_type=feat_type,
                                                   by_fraction = True,
                                                   norm = True)
         self.has_temp_info = False

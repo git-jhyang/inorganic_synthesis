@@ -360,7 +360,6 @@ class LigandTemplateDataset:
 
     def _check_valid_precursor(self, *args):
         i_src = None
-        print(args)
         if len(args) == 1:
             if isinstance(args[0], dict):
                 div = np.sum(list(args[0].values()))
@@ -395,7 +394,7 @@ class LigandTemplateDataset:
         return i_src        
 
     def to_label(self, *args):
-        i_source = self._check_valid_precursor(args)
+        i_source = self._check_valid_precursor(*args)
         _, label = self._source_to_label[i_source]
         return label
 
@@ -403,7 +402,7 @@ class LigandTemplateDataset:
         if len(args) == 0:
             return composition_to_feature({}, feature_type=self._feat_type, by_fraction=self._by_fraction)
         else:
-            i_ligand = self.to_label(args)
+            i_ligand = self.to_label(*args)
             return self._ligand_dict[self._ligand_str[i_ligand]]['embedding']
     
     def get_info(self, *args):

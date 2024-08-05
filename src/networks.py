@@ -593,39 +593,33 @@ class GraphCVAE(VAE):
                  **kwargs): 
         
         if graph.lower().startswith('conv'):
-            super(AutoEncoder, self).__init__(input_dim = input_dim,
-                                              latent_dim = latent_dim,
-                                              output_dim = output_dim,
-                                              edge_dim = edge_dim,
-                                              graph = 'convolution',
-                                              condition_dim = condition_dim,
-                                              encoder_hidden_dim = encoder_hidden_dim,
-                                              encoder_hidden_layers = encoder_hidden_layers,
-                                              decoder_hidden_dim = decoder_hidden_dim,
-                                              decoder_hidden_layers = decoder_hidden_layers,
-                                              batch_norm = batch_norm,
-                                              aggr = aggr,
-                                              activation = activation)
-
-            BLOCK = GraphConvolutionBlock
+            graph = 'convolution'
         elif graph.lower().startswith('atte'):
-            super(AutoEncoder, self).__init__(input_dim = input_dim,
-                                              latent_dim = latent_dim,
-                                              output_dim = output_dim,
-                                              edge_dim = edge_dim,
-                                              graph = 'attention',
-                                              condition_dim = condition_dim,
-                                              encoder_hidden_dim = encoder_hidden_dim,
-                                              encoder_hidden_layers = encoder_hidden_layers,
-                                              decoder_hidden_dim = decoder_hidden_dim,
-                                              decoder_hidden_layers = decoder_hidden_layers,
-                                              heads = heads,
-                                              dropout = dropout,
-                                              negative_slope = negative_slope,
-                                              activation = activation)
-            BLOCK = GraphAttentionBlock
+            graph = 'attention'
         else:
             raise SyntaxError(f'`{graph}` is not supported graph type')
+        
+        super(AutoEncoder, self).__init__(input_dim = input_dim,
+                                          latent_dim = latent_dim,
+                                          output_dim = output_dim,
+                                          edge_dim = edge_dim,
+                                          graph = graph,
+                                          condition_dim = condition_dim,
+                                          encoder_hidden_dim = encoder_hidden_dim,
+                                          encoder_hidden_layers = encoder_hidden_layers,
+                                          decoder_hidden_dim = decoder_hidden_dim,
+                                          decoder_hidden_layers = decoder_hidden_layers,
+                                          batch_norm = batch_norm,
+                                          aggr = aggr,
+                                          heads = heads,
+                                          dropout = dropout,
+                                          negative_slope = negative_slope,
+                                          activation = activation)
+
+        if graph == 'convolution':
+            BLOCK = GraphConvolutionBlock
+        elif graph == 'attention':
+            BLOCK = GraphAttentionBlock
         
         self.encoder = BLOCK(input_dim=input_dim,
                              edge_dim=edge_dim,
@@ -650,15 +644,9 @@ class GraphCVAE(VAE):
                              activation=activation)
 
     def forward(self, x, edge_index, edge_attr, condition, *args, **kwargs):
-        l = self.encoder(x = x, 
-                         edge_index = edge_index, 
-                         edge_attr = edge_attr)
-        
+        l = self.encoder(x = x, edge_index = edge_index, edge_attr = edge_attr)
         z, kld = self.reparameterization(l)
-
-        y = self.decoder(x = torch.concat([z, condition], -1), 
-                         edge_index = edge_index, 
-                         edge_attr = edge_attr)
+        y = self.decoder(x = torch.concat([z, condition], -1), edge_index = edge_index, edge_attr = edge_attr)
         return y, kld, l, z
 
     def sampling(self, n, edge_index, edge_attr, condition, *args, **kwargs):

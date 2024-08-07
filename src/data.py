@@ -132,7 +132,7 @@ class ReactionData(BaseData):
         # label and precursor
         if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
             self.precursor_comps = precursor_comps
-            self.label = np.zeros((len(meta_feat), precursor_ref.NUM_LABEL), dtype=int)
+            self.label = np.zeros((len(meta_feat), precursor_ref.NUM_LABEL), dtype=np.float32)
             precursor_feat = np.repeat(precursor_ref.get_embedding(), len(meta_feat), axis=0)
             for precursor_comp in precursor_comps:
                 metal = [e for e in precursor_comp.keys() if e in MetalElements]

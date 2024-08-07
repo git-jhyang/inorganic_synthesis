@@ -142,8 +142,7 @@ class ReactionData(BaseData):
                     i = len(metals) - 1
                 j = precursor_ref.to_label(precursor_comp)
                 self.label[i, j] = 1
-                precursor_feat[i] += precursor_ref.get_embedding(precursor_comp).reshape(-1)
-
+                precursor_feat[i] += composition_to_feature(precursor_comp, feat_type, by_fraction=True).reshape(-1)
             self.precursor_feat = np.vstack(precursor_feat)
             self._info_attrs.append('precursor_comps')
             self._feature_attrs.extend(['label','precursor_feat'])

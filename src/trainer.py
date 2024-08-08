@@ -6,9 +6,7 @@ class BaseTrainer:
                  feat_keys = ['label'], output_keys = ['pred']):
         self.model = model
         self.model.to(device)
-        self.opt = torch.optim.AdamW(self.model.parameters(), 
-                                     lr=lr,
-                                     betas=(0.099, 0.999))
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr)
         self.crit = crit
         self.device = device
         self.feat_keys = feat_keys

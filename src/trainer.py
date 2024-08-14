@@ -76,13 +76,14 @@ class BaseTrainer:
 
 class AETrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda', 
-                 crit=lambda x,y: torch.mean(torch.sum(torch.pow(x - y, 2), -1))):
-        super().__init__(model, lr, device, crit)
+                 crit=lambda x,y: torch.mean(torch.sum(torch.pow(x - y, 2), -1)),
+                 feat_keys = ['label'], output_keys = ['latent','pred']):
+        super().__init__(model, lr, device, crit, feat_keys, output_keys)
 
     def _eval_batch(self, batch, compute_loss=True, *args, **kwargs):
         feat, _ = batch
         latent, pred = self.model(feat)
-        output = [latent.detach(), pred.detach()]
+        output = [latent.detach().cpu(), pred.detach().cpu()]
         if compute_loss:
             loss = self.crit(pred, feat)
             # sim = torch.sum(pred * pred, 1, keepdim=True) / (
@@ -92,41 +93,12 @@ class AETrainer(BaseTrainer):
             return loss, output
         else:
             return output
-            
-# class VAETrainer(BaseTrainer): # Regression
-#     def __init__(self, model, lr, device='cuda', 
-#                  crit=lambda x,y: torch.mean(torch.sum(torch.pow(x - y, 2), -1))):
-#         super().__init__(model, lr, device, crit,
-#                          feat_keys=[],
-#                          output_keys=[])
-    
-#     def _eval_batch(self, batch, compute_loss=True, beta=0.1):
-#         feat, _ = batch
-#         pred, kld, l, z = self.model(**feat)
-#         pred = torch.nn.Hardsigmoid()(pred)
-#         mu, log_var = torch.chunk(l.detach(), 2, -1)
-#         output = [pred.detach(), kld.detach(), mu, log_var.exp(), z.detach()]
-#         if compute_loss:
-#             mse = self.crit(feat['x'], pred)
-# #            celoss = torch.nn.CrossEntropyLoss()()
-#             loss = mse + beta * kld.sum()
-#             return loss, output
-#         else:
-#             return output
-        
-#     def predict(self, dataloader, n_samples=1000):
-#         self.model.eval()
-#         self._init_output()
-#         with torch.no_grad():
-#             for batch in dataloader:
-#                 for feat, info in zip(*batch):
-#                     pred = self.model.sampling(n_samples, **feat)
-#                     self._parse_output([None, info], [pred.cpu().numpy(), *np.zeros((4,1,1))])
-#         return self._output
 
 class VAETrainer(BaseTrainer): # Classification
-    def __init__(self, model, lr, device='cuda', crit=torch.nn.CrossEntropyLoss(reduction='none')):
-        super().__init__(model, lr, device, crit)
+    def __init__(self, model, lr, device='cuda', 
+                 crit=torch.nn.CrossEntropyLoss(reduction='none'),
+                 feat_keys = ['label','label_mask'], output_keys = ['pred','kld','mu','log_var','z']):
+        super().__init__(model, lr, device, crit, feat_keys, output_keys)
     
     def _eval_batch(self, batch, compute_loss=True, beta=0.1):
         _feat, _ = batch
@@ -143,39 +115,21 @@ class VAETrainer(BaseTrainer): # Classification
             return output
         
 class SequenceTrainer(BaseTrainer):
-    def __init__(self, model, lr, device='cuda', crit=torch.nn.CrossEntropyLoss(reduction='none')):
-        super().__init__(model, lr, device, crit)
+    def __init__(self, model, lr, device='cuda', 
+                 crit=torch.nn.CrossEntropyLoss(reduction='none'),
+                 feat_keys = ['label','weight','sequence_mask'], output_keys = ['pred']):
+        super().__init__(model, lr, device, crit, feat_keys, output_keys)
     
     def _eval_batch(self, batch, compute_loss=True):
         _feat, _ = batch
         feat = {k:v.to(self.device) for k,v in _feat.items()}
         pred = self.model(**feat)
         B, S, L = pred.shape
+        output = [pred.detach().cpu()]
         if compute_loss:
             _loss = self.crit(pred.view(B * S, -1), feat['label']) * feat['weight']
 #            print(_loss.shape, feat['weight'].shape, feat['mask'].shape)
             loss = (_loss * feat['weight'][feat['sequence_mask']]).mean()
-            return loss, pred.detach().cpu().numpy()
+            return loss, output
         else:
-            return pred.detach().cpu().numpy()
-    
-    def _parse_output(self, batch, output):
-        feat, info = batch
-        if self._output is None:
-            self._output = {
-                'info' : info,
-                'pred' : output
-            }
-            if feat['weight'] is not None:
-                n = feat['context'].shape[0]
-                self._output.update({
-                    'label': feat['label'].cpu().numpy().reshape(n, -1),
-                    'weight': feat['weight'].cpu().numpy().reshape(n, -1)[:, 0],
-                })
-        else:
-            self._output['info'].extend(info)
-            self._output['pred'] = np.vstack([self._output['pred'], output])
-            if feat['weight'] is not None:
-                n = feat['context'].shape[0]
-                self._output['label'] = np.vstack([self._output['label'], feat['label'].cpu().numpy().reshape(n, -1)])
-                self._output['weight'] = np.hstack([self._output['weight'], feat['weight'].cpu().numpy().reshape(n, -1)[:,0]])
+            return output

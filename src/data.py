@@ -1,7 +1,7 @@
 import torch, gzip, pickle, json
 import numpy as np
 from .utils import MetalElements, composit_parser
-from .feature import PrecursorSequenceDataset, composition_to_feature, PrecursorDatasetForSequence
+from .feature import composition_to_feature, PrecursorSequenceDataset, LigandTemplateDataset
 from typing import Dict, List
 
 class BaseData:

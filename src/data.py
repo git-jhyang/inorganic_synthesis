@@ -1,8 +1,8 @@
 import torch, gzip, pickle, json, abc
 import numpy as np
 from .utils import MetalElements, composit_parser
-from .feature import (LigandTemplateDataset, 
-                      PrecursorSequenceDataset, 
+from .feature import (PrecursorSequenceReference, 
+                      LigandTemplateReference, 
                       composition_to_feature)
 from typing import Dict, List
 
@@ -226,8 +226,8 @@ class SequenceData(ReactionData):
         self.n = max_length
 
         # labels & precursor feat
-        EOS, EOS_VEC = precursor_ref.get_precursor_embedding('EOS')
-        SOS, SOS_VEC = precursor_ref.get_precursor_embedding('SOS')
+        EOS, EOS_VEC = precursor_ref.get_embedding('EOS')
+        SOS, SOS_VEC = precursor_ref.get_embedding('SOS')
 
         self._feature_attrs.append('sequence_mask')
         sequence_mask = np.zeros((max_length), dtype=bool)
@@ -433,12 +433,13 @@ class BaseDataset(torch.utils.data.Dataset):
 #         return torch.vstack(feat), info
     
 class ReactionDataset(BaseDataset):
-    def __init__(self, 
-                 feat_type:str = 'composit'):
+    def __init__(self, feat_type:str = 'composit',
+                 *args, **kwargs):
         super().__init__()
         self._feat_type = feat_type
-        self.precursor_dataset = LigandTemplateDataset(feat_type=feat_type,
-                                                       by_fraction = True)
+        self.precursor_dataset = LigandTemplateReference(feat_type=feat_type, 
+                                                         by_fraction = True, 
+                                                         *args, **kwargs)
 
     def from_data(self, data, target_comp_key, precursor_comp_key=None, 
                   heat_temp_key=None, heat_time_key=None, info_attrs=[], 
@@ -506,16 +507,16 @@ class ReactionDataset(BaseDataset):
             'weight' : weight,
         }, info
 
-
 #########################################################################################################
 
 class ReactionGraphDataset(BaseDataset):
-    def __init__(self, 
-                 feat_type:str = 'composit'):
+    def __init__(self, feat_type:str = 'composit',
+                 *args, **kwargs):
         super().__init__()
         self._feat_type = feat_type
-        self.precursor_dataset = LigandTemplateDataset(feat_type=feat_type,
-                                                       by_fraction = True)
+        self.precursor_dataset = LigandTemplateReference(feat_type=feat_type, 
+                                                         by_fraction = True, 
+                                                         *args, **kwargs)
 
     def from_data(self, data, target_comp_key, precursor_comp_key=None, 
                   heat_temp_key=None, heat_time_key=None, info_attrs=[], 
@@ -600,11 +601,13 @@ class SequenceDataset(BaseDataset):
                  feat_type:str = 'composit', 
                  shuffle_sequence:bool = True, 
                  sequence_length:int = 8,
-                 include_eos:int = 0):
+                 include_eos:int = 0,
+                 *args, **kwargs):
         super().__init__()
-        self.precursor_dataset = PrecursorSequenceDataset(feat_type=feat_type,
-                                                          by_fraction = True,
-                                                          norm = True)
+        self.precursor_dataset = PrecursorSequenceReference(feat_type=feat_type,
+                                                            by_fraction = True,
+                                                            norm = True,
+                                                            *args, **kwargs)
 
         self._feat_type = feat_type
         self._include_eos = include_eos if include_eos in [0,1] else -1

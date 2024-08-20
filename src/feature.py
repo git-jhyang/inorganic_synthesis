@@ -1,6 +1,6 @@
 from .utils import ActiveElements, AllElements, NEAR_ZERO, MetalElements, composit_parser
 import numpy as np
-import json, os, gzip, pickle, numbers
+import json, os, gzip, pickle, numbers, abc
 
 ATOM_EXCEPTION_WARNING = 'Warning: element [{}] is not included in feature type "{}"\n'
 FEAT_EXCEPTION_WARNING = 'feature type [{}] is not supported. '
@@ -123,7 +123,6 @@ def active_composit_feature(composit_dict, ref=ActiveElements, dtype=float, by_f
 #     else:
 #         return False
 
-
 ################################################################################################
 ################################################################################################
 #
@@ -132,96 +131,27 @@ def active_composit_feature(composit_dict, ref=ActiveElements, dtype=float, by_f
 ################################################################################################
 ################################################################################################
 
-class PrecursorSequenceDataset:
-    def __init__(self, 
-                 feat_type:str = 'composit',
-                 by_fraction:bool = True,
-                 norm:bool = True,
+class BaseReference:
+    def __init__(self, feat_type, by_fraction, norm=False, 
+                 ref_fn='screened_precursor.pkl.gz',
                  *args, **kwargs):
         self._feat_type = feat_type
         self._by_fraction = by_fraction
         self._norm = norm
-
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz')
-#        path = '../data/screened_precursor.pkl.gz'
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data', ref_fn)
+#        path = f'../data/{ref_fn}'
 
         with gzip.open(path, 'rb') as f:
             self._precursor_source = pickle.load(f)
-        self._active_precursors = [p['precursor_comp'] for p in self._precursor_source]
-        self._precursor_to_source = {composit_parser(c):i for i,c in enumerate(self._active_precursors)}
-        self._precursor_to_source.update({
-            'EOS':len(self._precursor_source),
-            'SOS':len(self._precursor_source) + 1,
-        })
-        self.update()
+        self._active_precursors = [p['precursor_str'] for p in self._precursor_source]
+        self._precursor_to_source = {c:i for i,c in enumerate(self._active_precursors)}
 
-    def update(self, active_precursors=None):
-        if not isinstance(active_precursors, (list, np.ndarray, tuple, set)):
-            active_precursors = self._active_precursors
-
-        _active_precursors = []
-#        self.label_to_precursor = []
-#        self.precursor_to_label = {}
-        self._source_to_label = - np.ones(len(self._precursor_source) + 2, dtype=int)
-        self._label_to_source = []
-        self._embedding = []
-
-        # parsing data based on new precursor set
-        for i, precursor in enumerate(self._precursor_source):
-            precursor_str = precursor['precursor_str']
-            if precursor_str not in _active_precursors:
-                continue
-            _active_precursors.append(precursor_str)
-            j = len(self.label_to_precursor)
-            self._label_to_source.append(i)
-            self._source_to_label[i] = j
-            self._embedding.append(
-                composition_to_feature(composit_dict = precursor['precursor_comp'], 
-                                       feature_type = self._feat_type,
-                                       by_fraction = self._by_fraction,
-                                       norm = self._norm))
-        
-        self.NUM_LABEL = len(self._label_to_source) + 2
-        self._active_precursors = _active_precursors.copy()
-
-#            self.label_to_precursor.append(precursor_str)
-#            self.precursor_to_label.update({precursor_str:j})
-
-        # make metal-precursor mask
-        self._precursor_mask = np.zeros((len(MetalElements) + 1, self.NUM_LABEL), dtype=bool)
-        for i,j in enumerate(self._label_to_source):
-            for ele in self._precursor_source[j]['precursor_comp'].keys():
-                if ele not in MetalElements:
-                    continue
-                k = MetalElements.index(ele)
-                self._precursor_mask[k, i] = True
-            if self._precursor_mask[:, i].sum() == 0:
-                self._precursor_mask[-1, i] = True
-
-        # set EOS
-        self.EOS_LABEL = len(self._label_to_source)
-        self._label_to_source.append()
-        self._source_to_label[self._precursor_to_source['EOS']] = self.EOS_LABEL
-        self._embedding.append(np.zeros_like(self._embedding[0]))
-        self._precursor_mask[-1, self.EOS_LABEL] = True
-
-        # set SOS
-        self.SOS_LABEL = len(self._label_to_source) + 1
-        self._label_to_source.append(self.SOS_LABEL)
-        self._source_to_label[self._precursor_to_source['SOS']] = self.SOS_LABEL
-        self._embedding.append(np.ones_like(self._embedding[0]))
-
-        self._label_to_source = np.array(self._label_to_source)
-        self._embedding = np.vstack(self._embedding)
-        
     def save(self, path, fn='precursor_data.json'):
-        self.active_precursors = list(self.active_precursors)
-
         info = {
             'feat_type': self._feat_type,
             'by_fraction': self._by_fraction,
             'norm': self._norm,
-            'active_precursors': self.active_precursors,
+            'active_precursors': self._active_precursors,
         }
         with open(os.path.join(path, fn), 'w') as f:
             json.dump(info, f, indent=4)
@@ -233,6 +163,82 @@ class PrecursorSequenceDataset:
                       by_fraction = info['by_fraction'],
                       norm = info['norm'])
         self.update(info['active_precursors'])
+        return self
+
+    @abc.abstractmethod
+    def update(self):
+        pass
+    
+    @abc.abstractmethod
+    def _check_valid_precursor(self):
+        pass
+
+    @abc.abstractmethod
+    def to_label(self):
+        pass
+
+    @abc.abstractmethod
+    def get_embedding(self):
+        pass
+    
+    @abc.abstractmethod
+    def get_info(self):
+        pass
+
+    @abc.abstractmethod
+    def get_mask(self):
+        pass
+
+    @abc.abstractmethod
+    def to_dict(self):
+        pass
+
+#####################################################################################
+
+class PrecursorReference(BaseReference):
+    def __init__(self, 
+                 feat_type:str = 'composit',
+                 by_fraction:bool = True,
+                 norm:bool = True,
+                 *args, **kwargs):
+        super().__init__(feat_type, by_fraction, norm, *args, **kwargs)
+        self.update()
+
+    def update(self, active_precursors=None):
+        if not isinstance(active_precursors, (list, np.ndarray, tuple, set)):
+            active_precursors = self._active_precursors
+        _active_precursors = []
+        self._source_to_label = - np.ones(len(self._precursor_source), dtype=int)
+        self._label_to_source = []
+        self._embedding = []
+        for i, precursor in enumerate(self._precursor_source):
+            precursor_str = precursor['precursor_str']
+            if precursor_str not in _active_precursors:
+                continue
+            _active_precursors.append(precursor_str)
+            j = len(self._label_to_source)
+            self._label_to_source.append(i)
+            self._source_to_label[i] = j
+            self._embedding.append(
+                composition_to_feature(composit_dict = precursor['precursor_comp'], 
+                                       feature_type = self._feat_type,
+                                       by_fraction = self._by_fraction,
+                                       norm = self._norm))
+        
+        self._embedding = np.vstack(self._embedding)
+        self.NUM_LABEL = len(self._label_to_source)
+        self._active_precursors = _active_precursors.copy()
+
+        self._precursor_mask = np.zeros((len(MetalElements) + 1, self.NUM_LABEL), dtype=bool)
+        for i,j in enumerate(self._label_to_source):
+            for ele in self._precursor_source[j]['precursor_comp'].keys():
+                if ele not in MetalElements:
+                    continue
+                k = MetalElements.index(ele)
+                self._precursor_mask[k, i] = True
+            if self._precursor_mask[:, i].sum() == 0:
+                self._precursor_mask[-1, i] = True
+        self._label_to_source = np.array(self._label_to_source)
 
     def _check_valid_precursor(self, precursor, exit=True):
         i_src = None
@@ -273,27 +279,64 @@ class PrecursorSequenceDataset:
     def to_dict(self):
         return {
             'feature_type': self._feat_type, 
+            'NUM_LABEL': self.NUM_LABEL,
+        }
+
+#####################################################################################
+
+class PrecursorSequenceReference(PrecursorReference):
+    def __init__(self, 
+                 feat_type:str = 'composit',
+                 by_fraction:bool = True,
+                 norm:bool = True,
+                 *args, **kwargs):
+        super().__init__(feat_type, by_fraction, norm, *args, **kwargs)
+        self._precursor_to_source.update({
+            'EOS':len(self._precursor_source),
+            'SOS':len(self._precursor_source) + 1,
+        })
+        self.update()
+
+    def update(self, active_precursors=None):
+        super().update(active_precursors=active_precursors)
+        self._source_to_label = np.hstack([self._source_to_label, [-1, -1]])
+
+        self.NUM_LABEL = len(self._label_to_source) + 2
+
+        # set EOS
+        self.EOS_LABEL = len(self._label_to_source)
+        self._source_to_label[self._precursor_to_source['EOS']] = self.EOS_LABEL
+        self._precursor_mask = np.hstack([self._precursor_mask,
+                                          np.zeros(len(MetalElements)+1, 1)])
+        self._precursor_mask[-1, -1] = True
+
+        # set SOS
+        self.SOS_LABEL = len(self._label_to_source) + 1
+        self._source_to_label[self._precursor_to_source['SOS']] = self.SOS_LABEL
+
+        self._label_to_source = np.hstack([self._label_to_source, 
+                                           [self._precursor_to_source['EOS'],
+                                            self._precursor_to_source['SOS']]])
+        self._embedding = np.vstack([self._embedding, 
+                                     np.zeros_like(self._embedding[0]).reshape(1,-1),
+                                     np.ones_like(self._embedding[0]).reshape(1,-1)])
+
+    def to_dict(self):
+        return {
+            'feature_type': self._feat_type, 
             'EOS_LABEL': self.EOS_LABEL, 
             'SOS_LABEL': self.SOS_LABEL, 
             'NUM_LABEL': self.NUM_LABEL,
         }
 
+#####################################################################################
 
-class LigandTemplateDataset:
+class LigandTemplateReference(BaseReference):
     def __init__(self, 
                  feat_type:str = 'composit',
                  by_fraction:bool = True,
                  *args, **kwargs):
-        self._feat_type = feat_type
-        self._by_fraction = by_fraction
-
-#        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../data/screened_precursor.pkl.gz')
-        path = '../data/screened_precursor.pkl.gz'
-
-        with gzip.open(path, 'rb') as f:
-            self._precursor_source = pickle.load(f)
-        self._active_precursors = [p['precursor_str'] for p in self._precursor_source]
-        self._precursor_to_source = {c:i for i,c in enumerate(self._active_precursors)}
+        super().__init__(feat_type, by_fraction, *args, **kwargs)
 #        self._source_vecs = np.vstack([composition_to_feature(c) for c in self._active_precursors])
         self._metal_indexer = {'none': 0}
         self._metal_indexer.update({metal:i+1 for i,metal in enumerate(MetalElements)})
@@ -339,24 +382,6 @@ class LigandTemplateDataset:
             for i, i_source in ligand_info['metals']:
                 self._label_to_source[i, j] = i_source
                 self._source_to_label[i_source] = i, j
-
-    def save(self, path, fn='precursor_data.json'):
-        info = {
-            'feat_type': self._feat_type,
-            'by_fraction': self._by_fraction,
-            'active_precursors': self._active_precursors,
-        }
-        with open(os.path.join(path, fn), 'w') as f:
-            json.dump(info, f, indent=4)
-    
-    def load(self, path, fn='precursor_data.json'):
-        with open(os.path.join(path, fn), 'r') as f:
-            info = json.load(f)
-        self.__init__(feat_type = info['feat_type'],
-                      by_fraction = info['by_fraction'],
-                      norm = info['norm'])
-        self.update(info['active_precursors'])
-        return self
 
     def _check_valid_precursor(self, *args):
         i_src = None

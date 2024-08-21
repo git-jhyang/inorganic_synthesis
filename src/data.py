@@ -139,7 +139,7 @@ class ReactionData(BaseData):
                 if len(metal) != 0:
                     i = metals.index(metal[0])
                 else:
-                    i = len(metals) - 1
+                    i = len(metals)
                 j = precursor_ref.to_label(precursor_comp)
                 self.label[i, j] = 1
                 precursor_feat[i] += composition_to_feature(precursor_comp, feat_type, by_fraction=True).reshape(-1)
@@ -370,7 +370,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def parsing_data(self, data, precursor_comp_key=None, heat_temp_key=None, heat_time_key=None):
         precursor_comps = []
-        if precursor_comp_key is not None and precursor_comp_key in data.keys():
+        if (precursor_comp_key is not None) and (precursor_comp_key in data.keys()):
             precursor_comps = data[precursor_comp_key]
             self._train = True
         heat_temp = None
@@ -548,6 +548,7 @@ class ReactionGraphDataset(BaseDataset):
         meta_feat = []
         edge_feat = []
         edge_index = []
+        is_null = []
         n = 0
         for i, data in enumerate(dataset):
             info.append(data.to_dict())
@@ -555,11 +556,13 @@ class ReactionGraphDataset(BaseDataset):
             meta_feat.append(data.meta_feat)
             edge_feat.append(data.edge_feat)
             edge_index.append(data.edge_index + n)
+            is_null.extend([False] * (data.n - 1) + [True])
             n += data.n
         rxn_id = np.hstack(rxn_id).astype(int)
         meta_feat = torch.vstack(meta_feat).float()
         edge_feat = torch.vstack(edge_feat).float()
         edge_index = torch.hstack(edge_index).long()
+        is_null = torch.tensor(is_null).bool()
 
         condition_feat = []
         if self.has_temp_info or self.has_time_info:
@@ -591,6 +594,7 @@ class ReactionGraphDataset(BaseDataset):
             'x' : prec_feat,
             'label' : label,
             'label_mask' : label_mask,
+            'is_null' : is_null,
             'weight' : weight,
         }, info
 

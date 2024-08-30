@@ -92,7 +92,7 @@ class FCNNBlock(BaseNetwork):
                 layer.append(torch.nn.Dropout(dropout))
             layer.append(activation)
             hidden_layer.append(torch.nn.Sequential(*layer))
-        self.hidden_layer = torch.nn.Sequential(*hidden_layers)
+        self.hidden_layer = torch.nn.Sequential(*hidden_layer)
 
         self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
     

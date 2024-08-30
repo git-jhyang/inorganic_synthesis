@@ -88,7 +88,7 @@ def exponential_kld_annealing(epochs, start=-35, stop=0, period=500, ratio=0.5):
         beta[i::int(period)] = np.power(10.0, start + step * i)
     return np.clip(beta, np.power(10.0, start), np.power(10.0, stop))
 
-def composit_parser(composit, fmt='{:.5f}'):
+def composit_parser(composit, fmt='{:.5f}', norm=True):
     if isinstance(composit, list):
         _comp = {}
         for comp in composit:
@@ -100,8 +100,9 @@ def composit_parser(composit, fmt='{:.5f}'):
     else:
         _comp = composit.copy()
     comp_str = []
+    n = 1 if ((not norm) or (len(_comp) == 0)) else 1. / np.sum(list(_comp.values()))
     for k, v in sorted(_comp.items(), key=lambda x: Element(x[0]).number):
-        comp_str.append(f'{k}_' + fmt.format(v))
+        comp_str.append(f'{k}_' + fmt.format(v * n))
     return ' '.join(comp_str)
 
 def check_precursor_frequency(reactions, comp_key='precursor_comp'):

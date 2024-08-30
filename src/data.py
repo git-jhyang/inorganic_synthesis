@@ -1,7 +1,8 @@
 import torch, gzip, pickle, json, abc
 import numpy as np
 from .utils import MetalElements, composit_parser
-from .feature import (PrecursorSequenceReference, 
+from .feature import (PrecursorReference,
+                      PrecursorSequenceReference, 
                       LigandTemplateReference, 
                       composition_to_feature)
 from typing import Dict, List
@@ -133,7 +134,7 @@ class ReactionData(BaseData):
         if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
             self.precursor_comps = precursor_comps
             self.label = np.zeros((len(meta_feat), precursor_ref.NUM_LABEL), dtype=np.float32)
-            precursor_feat = np.repeat(precursor_ref.get_embedding(), len(meta_feat), axis=0)
+            precursor_feat = np.repeat(precursor_ref.get_embedding({}), len(meta_feat), axis=0)
             for precursor_comp in precursor_comps:
                 metal = [e for e in precursor_comp.keys() if e in MetalElements]
                 if len(metal) != 0:
@@ -437,9 +438,9 @@ class ReactionDataset(BaseDataset):
                  *args, **kwargs):
         super().__init__()
         self._feat_type = feat_type
-        self.precursor_dataset = LigandTemplateReference(feat_type=feat_type, 
-                                                         by_fraction = True, 
-                                                         *args, **kwargs)
+        self.precursor_dataset = PrecursorReference(feat_type=feat_type, 
+                                                    by_fraction = True, 
+                                                    *args, **kwargs)
 
     def from_data(self, data, target_comp_key, precursor_comp_key=None, 
                   heat_temp_key=None, heat_time_key=None, info_attrs=[], 
@@ -469,42 +470,41 @@ class ReactionDataset(BaseDataset):
         info = []
         rxn_id = []
         meta_feat = []
+
         for i, data in enumerate(dataset):
             info.append(data.to_dict())
             rxn_id.append([i] * data.n)
-            meta_feat.append(data.meta_feat)
+            meta_feat.append(data.target_feat)
+        
         rxn_id = np.hstack(rxn_id).astype(int)
         meta_feat = torch.vstack(meta_feat).float()
 
-        condition_feat = []
         if self.has_temp_info or self.has_time_info:
-            for data in dataset:
-                condition_feat.append(data.condition_feat.repeat(data.n, 1))
+            condition_feat = [data.condition_feat for data in dataset]
             meta_feat = torch.hstack([torch.vstack(condition_feat), meta_feat]).float()
 
         prec_feat = []
         label = []
         label_mask = []
-        weight = []
+        label_mask_ = []
         if self._train:
             for data in dataset:
-                prec_feat.append(data.precursor_feat)
-                label.append(data.label)
-                label_mask.append(data.label_mask)
-                weight.append(data.weight.repeat(data.label.shape))
+                prec_feat.append(data.precursor_feat.sum(0))
+                label.append(data.label.sum(0))
+                label_mask.append(data.label_mask.sum(0).bool())
+                label_mask_.append(data.label_mask)
             prec_feat = torch.vstack(prec_feat)
             label = torch.vstack(label)
             label_mask = torch.vstack(label_mask)
-            weight = torch.vstack(weight)
+            label_mask_ = torch.vstack(label_mask_).numpy()
 
         return {
             'rxn_id' : rxn_id,
             'condition' : meta_feat,
-#            'condition_feat' : condition_feat,
             'x' : prec_feat,
             'label' : label,
             'label_mask' : label_mask,
-            'weight' : weight,
+            'label_mask_orig' : label_mask_
         }, info
 
 #########################################################################################################
@@ -548,7 +548,6 @@ class ReactionGraphDataset(BaseDataset):
         meta_feat = []
         edge_feat = []
         edge_index = []
-        is_null = []
         n = 0
         for i, data in enumerate(dataset):
             info.append(data.to_dict())
@@ -556,18 +555,14 @@ class ReactionGraphDataset(BaseDataset):
             meta_feat.append(data.meta_feat)
             edge_feat.append(data.edge_feat)
             edge_index.append(data.edge_index + n)
-            is_null.extend([False] * (data.n - 1) + [True])
             n += data.n
         rxn_id = np.hstack(rxn_id).astype(int)
         meta_feat = torch.vstack(meta_feat).float()
         edge_feat = torch.vstack(edge_feat).float()
         edge_index = torch.hstack(edge_index).long()
-        is_null = torch.tensor(is_null).bool()
 
-        condition_feat = []
         if self.has_temp_info or self.has_time_info:
-            for data in dataset:
-                condition_feat.append(data.condition_feat.repeat(data.n, 1))
+            condition_feat = [data.condition_feat.repeat(data.n, 1) for data in dataset]
             meta_feat = torch.hstack([torch.vstack(condition_feat), meta_feat]).float()
 
         prec_feat = []
@@ -594,7 +589,6 @@ class ReactionGraphDataset(BaseDataset):
             'x' : prec_feat,
             'label' : label,
             'label_mask' : label_mask,
-            'is_null' : is_null,
             'weight' : weight,
         }, info
 

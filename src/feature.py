@@ -213,7 +213,7 @@ class PrecursorReference(BaseReference):
         self._embedding = []
         for i, precursor in enumerate(self._precursor_source):
             precursor_str = precursor['precursor_str']
-            if precursor_str not in _active_precursors:
+            if precursor_str not in active_precursors:
                 continue
             _active_precursors.append(precursor_str)
             j = len(self._label_to_source)
@@ -225,7 +225,7 @@ class PrecursorReference(BaseReference):
                                        by_fraction = self._by_fraction,
                                        norm = self._norm))
         
-        self._embedding = np.vstack(self._embedding)
+        self._embedding = np.vstack(self._embedding)[:, np.newaxis, :]
         self.NUM_LABEL = len(self._label_to_source)
         self._active_precursors = _active_precursors.copy()
 
@@ -259,12 +259,11 @@ class PrecursorReference(BaseReference):
         return self._source_to_label[i_src]
 
     def get_embedding(self, precursor):
-        i_src = self._check_valid_precursor(precursor)
-        if i_src is None:
-            return np.zeros_like(self._embedding[0]).reshape(1,-1)
-        else:
-            label = self._source_to_label[i_src]
-            return self._embedding[label].reshape(1,-1)
+        try:
+            label = self.to_label(precursor)
+            return self._embedding[label]
+        except:
+            return np.zeros_like(self._embedding[0])
 
     def get_info(self, precursor):
         i_src = self._check_valid_precursor(precursor)
@@ -359,7 +358,7 @@ class LigandTemplateReference(BaseReference):
                     i_metal = self._metal_indexer[ele]
                 else:
                     non_metal[ele] = n/n_total
-            ligand_str = composit_parser(non_metal)
+            ligand_str = composit_parser(non_metal, norm=False)
             if ligand_str not in self._ligand_dict.keys():
                 self._ligand_dict[ligand_str] = {
                     'label':None, 
@@ -370,7 +369,7 @@ class LigandTemplateReference(BaseReference):
                                                         norm=False).reshape(1,-1),
                     'metals':[]}
             self._ligand_dict[ligand_str]['metals'].append((i_metal, i_src))
-
+        self._dummy_embedding = np.zeros_like(self._ligand_dict[ligand_str]['embedding'])
         self.NUM_LABEL = len(self._ligand_dict)
         self._active_precursors = _active_precursors.copy()
 
@@ -387,8 +386,7 @@ class LigandTemplateReference(BaseReference):
         i_src = None
         if len(args) == 1:
             if isinstance(args[0], dict):
-                div = np.sum(list(args[0].values()))
-                precursor = composit_parser({e:n/div for e,n in args[0].items()})
+                precursor = composit_parser(args[0])
             elif isinstance(args[0], str):
                 precursor = args[0]
             else:
@@ -424,11 +422,11 @@ class LigandTemplateReference(BaseReference):
         return label
 
     def get_embedding(self, *args):
-        if len(args) == 0:
-            return composition_to_feature({}, feature_type=self._feat_type, by_fraction=self._by_fraction)
-        else:
+        try:
             i_ligand = self.to_label(*args)
             return self._ligand_dict[self._ligand_str[i_ligand]]['embedding']
+        except:
+            return self._dummy_embedding
     
     def get_info(self, *args):
         i_source = self._check_valid_precursor(*args)

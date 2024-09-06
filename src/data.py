@@ -197,9 +197,6 @@ class GraphData(ReactionData):
         self.edge_index = np.array(edge_index, dtype=int).T
         self.edge_feat = np.vstack(edge_feat, dtype=np.float32)
         
-        delattr(self, 'target_feat')
-        self._feature_attrs.pop(self._feature_attrs.index('target_feat'))
-
 class SequenceData(ReactionData):
     def __init__(self, 
                  data : Dict = {},
@@ -546,6 +543,7 @@ class ReactionGraphDataset(BaseDataset):
         info = []
         rxn_id = []
         meta_feat = []
+        target_feat = []
         edge_feat = []
         edge_index = []
         n = 0
@@ -553,17 +551,19 @@ class ReactionGraphDataset(BaseDataset):
             info.append(data.to_dict())
             rxn_id.append([i] * data.n)
             meta_feat.append(data.meta_feat)
+            target_feat.append(data.target_feat)
             edge_feat.append(data.edge_feat)
             edge_index.append(data.edge_index + n)
             n += data.n
         rxn_id = np.hstack(rxn_id).astype(int)
         meta_feat = torch.vstack(meta_feat).float()
+        target_feat = torch.vstack(target_feat).float()
         edge_feat = torch.vstack(edge_feat).float()
         edge_index = torch.hstack(edge_index).long()
 
+        condition_feat = []
         if self.has_temp_info or self.has_time_info:
-            condition_feat = [data.condition_feat.repeat(data.n, 1) for data in dataset]
-            meta_feat = torch.hstack([torch.vstack(condition_feat), meta_feat]).float()
+            condition_feat = torch.vstack([data.condition_feat for data in dataset])
 
         prec_feat = []
         label = []
@@ -582,10 +582,10 @@ class ReactionGraphDataset(BaseDataset):
 
         return {
             'rxn_id' : rxn_id,
-            'condition' : meta_feat,
+            'meta_feat' : meta_feat,
             'edge_attr' : edge_feat,
             'edge_index' : edge_index,
-#            'condition_feat' : condition_feat,
+            'condition_feat' : condition_feat,
             'x' : prec_feat,
             'label' : label,
             'label_mask' : label_mask,

@@ -585,6 +585,7 @@ class ReactionGraphDataset(BaseDataset):
             'meta_feat' : meta_feat,
             'edge_attr' : edge_feat,
             'edge_index' : edge_index,
+            'target_feat' : target_feat,
             'condition_feat' : condition_feat,
             'x' : prec_feat,
             'label' : label,

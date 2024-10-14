@@ -656,4 +656,4 @@ class GraphCVAE(VAE):
             y.append(self.decoder(x = torch.concat([z, condition], -1),
                                   edge_index = edge_index,
                                   edge_attr = edge_attr))
-        return 
+        return y

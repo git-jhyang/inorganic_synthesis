@@ -134,7 +134,7 @@ def active_composit_feature(composit_dict, ref=ActiveElements, dtype=float, by_f
 class BaseReference:
     def __init__(self, feat_type, by_fraction, norm=False, 
                  label_weight_fnc = None,
-                 ref_fn='unique_precursor.pkl.gz',
+                 ref_fn='screened_precursor.pkl.gz',
                  *args, **kwargs):
         self._feat_type = feat_type
         self._by_fraction = by_fraction

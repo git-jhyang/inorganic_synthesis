@@ -1,4 +1,4 @@
-from pymatgen.core import Element
+from pymatgen.core import Element, Composition
 import numpy as np
 import torch, copy
 
@@ -146,14 +146,110 @@ def screening_reactions_by_freq(reactions, precursors, minimum_frequency=5):
     else:
         return screened_reaction, screened_precursor
 
-def sequence_output_metrics(pred, label):
-    if len(pred.shape) != len(label.shape):
-        pred = pred.argmax(-1)
-    N, S = pred.shape
-    sorted(np.unique(label.reshape(N, S)[:, -1], return_counts=True), key=lambda x: x[1])
+# def sequence_output_metrics(pred, label):
+#     if len(pred.shape) != len(label.shape):
+#         pred = pred.argmax(-1)
+#     N, S = pred.shape
+#     sorted(np.unique(label.reshape(N, S)[:, -1], return_counts=True), key=lambda x: x[1])
 
-    mask = np.hstack([np.ones((N, 1), dtype=bool), (label != DS.EOS_LABEL)[..., :-1]]).reshape(-1)
-    acc = accuracy_score(label.reshape(-1)[mask], pred.reshape(-1)[mask])
-    f1_mi = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='micro')
-    f1_ma = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='macro')
-    hit_rxn = np.array([(p[m] != l[m]).sum() == 0 for p, l, m in zip(pred, label, mask)]).astype(float).mean()
+#     mask = np.hstack([np.ones((N, 1), dtype=bool), (label != DS.EOS_LABEL)[..., :-1]]).reshape(-1)
+#     acc = accuracy_score(label.reshape(-1)[mask], pred.reshape(-1)[mask])
+#     f1_mi = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='micro')
+#     f1_ma = f1_score(label.reshape(-1)[mask], pred.reshape(-1)[mask], average='macro')
+#     hit_rxn = np.array([(p[m] != l[m]).sum() == 0 for p, l, m in zip(pred, label, mask)]).astype(float).mean()
+
+def heat_tempearture_norm(x):
+    return x * 0.001 - 1
+
+def heat_tempearture_denorm(x):
+    return x * 1000 + 1000
+
+def heat_time_norm(x):
+    return np.log10(x) - 1
+
+def heat_time_denorm(x):
+    return np.power(10, x + 1)
+
+def parse_rxn_ids(data):
+    rxn_ids_ = []
+    n = 0
+    for rxn_id in data:
+        rxn_ids_.append(rxn_id + n - rxn_id.min())
+        n += rxn_id.max() + 1
+    rxn_ids = np.hstack(rxn_ids_)
+    is_last = np.hstack([rxn_ids[1:] != rxn_ids[:-1], [True]])
+    return rxn_ids, is_last
+
+def compute_metrics_from_cvae_output_v0(output, th=None, print_result=False):
+    pred_has = 1 / (1 + np.exp(-np.hstack(output['pred_has'])))
+    pred_lbl = np.vstack(output['pred_label'])
+    label = np.vstack(output['label']).astype(bool)
+    weight = np.vstack(output['weight'])
+    label_mask = weight > 0
+    has_label = label.sum(1)
+    rxn_ids, is_last = parse_rxn_ids(output['rxn_id'])
+
+    if th is None:
+        ths = np.linspace(0.1, 0.9, 801)
+        has_hit = [np.mean(has_label[is_last] == (pred_has[is_last] > th)) for th in ths]
+        th = ths[np.argmax(has_hit)]
+    acc = np.mean(has_label[is_last] == (pred_has[is_last] > th))
+    has_label = np.ones_like(is_last)
+    has_label[is_last] = pred_has[is_last] > th
+
+    out = {f'top_{i+1}':{} for i in range(4)}
+    for i, l, p, m, h in zip(rxn_ids, label, pred_lbl, label_mask, has_label):
+        if i not in out['top_1'].keys():
+            for j in range(4):
+                out[f'top_{j+1}'][i] = [[], []]
+        if m.sum() == 1:
+            for j in range(4):
+                out[f'top_{j+1}'][i][0] = np.hstack([out[f'top_{j+1}'][i][0], [True]])
+                out[f'top_{j+1}'][i][1] = np.hstack([out[f'top_{j+1}'][i][1], [True]])
+        check = h + l.sum()
+        if check == 0:
+            continue
+        elif check == 1:
+            for j in range(4):
+                out[f'top_{j+1}'][i][0] = np.hstack([out[f'top_{j+1}'][i][0], [False]])
+                out[f'top_{j+1}'][i][1] = np.hstack([out[f'top_{j+1}'][i][1], [False]])
+        else:
+            idxs = np.argsort(p)[::-1][:4]
+            p_ = np.zeros_like(m)
+            for j,k in enumerate(idxs):
+                if m[k]:
+                    p_[k] = True
+                out[f'top_{j+1}'][i][0] = np.hstack([out[f'top_{j+1}'][i][0], p_[l]])
+                out[f'top_{j+1}'][i][1] = np.hstack([out[f'top_{j+1}'][i][1], l[p_]])
+    _out = {}
+    for k,vs in out.items():
+        r = np.hstack([v[0] for v in vs.values()]).mean()
+        p = np.hstack([v[1] for v in vs.values()]).mean()
+        f = 2 * r * p / (r + p)
+        r2 = np.mean([np.sum(v[0] == 0) == 0 for v in vs.values()])
+        p2 = np.mean([np.sum(v[1] == 0) == 0 for v in vs.values()])
+        f2 = 2 * r2 * p2 / (r2 + p2)
+        _out[k] = [f, p, r, f2, p2, r2]
+    
+    if print_result:
+        print('Null label hit accuracy : {:.4f} (th: {:.3f})'.format(acc, th))
+        print('-' * 56)
+        print('{:7s}| {:23s}| {}'.format('', 'Precursor', 'Reaction'))
+        s = ' '.join([f'{s:7s}' for s in ['F1','Prec','Recall']])
+        print('{:7s}| {}| {}'.format('', s, s))
+        print('-' * 56)
+        for k, vs in _out.items():
+            print('{:6s} | {} | {}'.format(k, '  '.join([f'{v:.4f}' for v in vs[:3]]), '  '.join([f'{v:.4f}' for v in vs[3:]])))
+    return acc, th, _out
+
+def sort_precursor_by_target_element(target, precursor):
+    j = []
+    for ele1 in target.keys():
+        for i, comp in enumerate(precursor):
+            if ele1 not in comp.keys(): continue
+            if i in j: continue
+            j.append(i)
+    target_str = Composition(target).get_integer_formula_and_factor()[0]
+    precursor_str = [Composition(p).get_integer_formula_and_factor()[0] for p in precursor]
+    return target_str, [precursor_str[_j] for _j in j]
+

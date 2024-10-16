@@ -2,10 +2,9 @@ import os, pickle
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-from src.networks import CVAE, GraphCVAE
-from src.data import ConditionDataset, ReactionDataset
+from src.networks import GraphCVAE
+from src.data import ReactionGraphDataset
 from src.trainer import VAETrainer
-from src.feature import parse_feature
 from src.utils import squared_error, cosin_similarity, linear_kld_annealing
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.tensorboard import SummaryWriter

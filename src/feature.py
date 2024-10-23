@@ -148,7 +148,6 @@ class BaseReference:
 
         with gzip.open(path, 'rb') as f:
             self._precursor_source = pickle.load(f)
-#        self._precursor_source.append({'precursor_str':''})
         self._active_precursors = [p['precursor_str'] for p in self._precursor_source]
         self._precursor_to_source = {c:i for i,c in enumerate(self._active_precursors)}
 
@@ -228,14 +227,16 @@ class PrecursorReference(BaseReference):
         self.NUM_LABEL = len(self._label_to_source)
         self._active_precursors = _active_precursors.copy()
 
-        self._weight = np.zeros((len(MetalElements) + 1, self.NUM_LABEL), dtype=float)
-        for i,j in enumerate(self._label_to_source):
+        self._weight = np.zeros((len(ActiveElements) + 1, self.NUM_LABEL), dtype=float)
+        for i, j in enumerate(self._label_to_source):
+            has_metal = False
             for ele in self._precursor_source[j]['precursor_comp'].keys():
+                k = ActiveElements.index(ele)
+                self._weight[k, i] += self._label_weight_fnc(self._precursor_source[j])
                 if ele in MetalElements:
-                    k = MetalElements.index(ele) + 1
-                    self._weight[k, i] = self._label_weight_fnc(self._precursor_source[j])
-            if self._weight[:, i].sum() == 0:
-                self._weight[0, i] = self._label_weight_fnc(self._precursor_source[j])
+                    has_metal = True
+            if not has_metal:
+                self._weight[-1, i] = self._label_weight_fnc(self._precursor_source[j])
         self._label_to_source = np.array(self._label_to_source)
 
     def _check_valid_precursor(self, precursor, exit=True):
@@ -260,11 +261,11 @@ class PrecursorReference(BaseReference):
         i_src = self._check_valid_precursor(precursor)
         return self._precursor_source[i_src]
 
-    def get_weight(self, metal):
-        if metal in MetalElements:
-            return self._weight[MetalElements.index(metal)+1].reshape(1,-1)
+    def get_weight(self, element):
+        if element in ActiveElements:
+            return self._weight[ActiveElements.index(element)].reshape(1,-1)
         else:
-            return self._weight[0].reshape(1,-1)
+            return self._weight[-1].reshape(1,-1)
 
     def to_dict(self):
         return {
@@ -345,38 +346,39 @@ class LigandTemplateReference(BaseReference):
         if not isinstance(active_precursors, (list, np.ndarray, tuple, set)):
             active_precursors = self._active_precursors
         _active_precursors = []
-        self._ligand_dict = {}
+        self._ligand_str = []
+        self._weight = np.zeros((len(ActiveElements)+1, len(self._precursor_source)), dtype=float)
+        self._source_to_label = np.zeros((len(self._precursor_source), 2), dtype=int)
+        self._label_to_source = -np.ones_like(self._weight).astype(int)
         for i_src, precursor in enumerate(self._precursor_source):
             if precursor['precursor_str'] not in active_precursors:
                 continue
             _active_precursors.append(precursor['precursor_str'])
-            non_metal = {}
-            i_metal = 0
+            i_metal = -1
+            ligand  = {}
             for ele, n in precursor['precursor_comp'].items():
                 if ele in MetalElements:
-                    i_metal = MetalElements.index(ele) + 1
+                    i_metal = ActiveElements.index(ele)
                 else:
-                    non_metal[ele] = n
-            ligand_str = composit_parser(non_metal, norm=False)
-            if ligand_str not in self._ligand_dict.keys():
-                self._ligand_dict[ligand_str] = {
-                    'label':None, 
-                    'composition':non_metal,
-                    'metals':[]}
-            self._ligand_dict[ligand_str]['metals'].append((i_metal, i_src))
-        self.NUM_LABEL = len(self._ligand_dict)
-        self._active_precursors = _active_precursors.copy()
+                    ligand[ele] = n
+            ligand_str = composit_parser(ligand, norm=False)
+            if ligand_str in self._ligand_str:
+                i_ligand = self._ligand_str.index(ligand_str)
+            else:
+                i_ligand = len(self._ligand_str)
+                self._ligand_str.append(ligand_str)
+            self._label_to_source[i_metal, i_ligand] = i_src
+            self._source_to_label[i_src] = i_metal, i_ligand
+            self._weight[i_metal, i_ligand] += self._label_weight_fnc(self._precursor_source[i_src])
+            for ele in precursor['precursor_comp'].keys():
+                if ele in MetalElements:
+                    continue
+                i_ele = ActiveElements.index(ele)
+                self._weight[i_ele, i_ligand] += self._label_weight_fnc(self._precursor_source[i_src])
 
-        self._source_to_label = np.zeros((len(self._precursor_source), 2), dtype=int)
-        self._label_to_source = - np.ones((len(MetalElements)+1, self.NUM_LABEL), dtype=int)
-        self._weight = np.zeros_like(self._label_to_source).astype(float)
-        self._ligand_str = list(self._ligand_dict.keys())
-        for j, ligand_info in enumerate(self._ligand_dict.values()):
-            ligand_info['label'] = j
-            for i, i_source in ligand_info['metals']:
-                self._label_to_source[i, j] = i_source
-                self._weight[i, j] = self._label_weight_fnc(self._precursor_source[i_source])
-                self._source_to_label[i_source] = i, j
+        self.NUM_LABEL = len(self._ligand_str)
+        self._active_precursors = _active_precursors.copy()
+        self._weight = self._weight[:, :self.NUM_LABEL]
 
     def _check_valid_precursor(self, *args):
         i_src = None
@@ -393,16 +395,16 @@ class LigandTemplateReference(BaseReference):
                 i_src = None
         elif len(args) > 1:
             metal, ligand = args[:2]
-            i_metal, i_ligand = 0, None
+            i_metal, i_ligand = -1, None
             if isinstance(metal, str) and metal in MetalElements:
-                i_metal = MetalElements.index(metal) + 1
-            elif isinstance(metal, numbers.Integral) and metal < len(MetalElements) + 1:
+                i_metal = ActiveElements.index(metal)
+            elif isinstance(metal, numbers.Integral) and (metal < len(ActiveElements)) and (ActiveElements[metal] in MetalElements):
                 i_metal = metal
-            if isinstance(ligand, str) and (ligand in self._ligand_dict.keys()):
-                i_ligand = self._ligand_dict[ligand]['label']
-            elif isinstance(ligand, numbers.Integral) and ligand < len(self._ligand_dict):
+            if isinstance(ligand, str) and (ligand in self._ligand_str):
+                i_ligand = self._ligand_str.index(ligand)
+            elif isinstance(ligand, numbers.Integral) and ligand < len(self._ligand_str):
                 i_ligand = ligand
-            if (i_metal is None) or (i_ligand is None):
+            if i_ligand is None:
                 i_src = None
             else:
                 i_src = self._label_to_source[i_metal, i_ligand]
@@ -421,11 +423,11 @@ class LigandTemplateReference(BaseReference):
         i_source = self._check_valid_precursor(*args)
         return self._precursor_source[i_source]
     
-    def get_weight(self, metal):
-        if metal in MetalElements:
-            return self._weight[MetalElements.index(metal)+1].reshape(1,-1)
+    def get_weight(self, element):
+        if element in ActiveElements:
+            return self._weight[ActiveElements.index(element)].reshape(1,-1)
         else:
-            return self._weight[0].reshape(1,-1)
+            return self._weight[-1].reshape(1,-1)
 
     def to_dict(self):
         return {

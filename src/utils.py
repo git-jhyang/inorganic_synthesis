@@ -1,4 +1,5 @@
 from pymatgen.core import Element, Composition
+from itertools import product
 import numpy as np
 import torch, copy
 
@@ -28,6 +29,10 @@ def to_numpy(vector):
         return vector.cpu().numpy()
     else:
         return np.array(vector)
+
+
+################################################################################################
+
 
 def squared_error(mat1, mat2, average=True):
     x = to_numpy(mat1)
@@ -60,6 +65,10 @@ def cosin_similarity(mat1, mat2, average=True):
 #         out.append([i, sser[i], csim[i]])
 #     return np.array(out).T
 
+
+################################################################################################
+
+
 def linear_kld_annealing(epochs, start=0, stop=1, period=500, ratio=0.5):
     '''
     Code from paper 'Cyclical Annealing Schedule: A Simple Approach to Mitigating KL Vanishing'
@@ -74,6 +83,10 @@ def linear_kld_annealing(epochs, start=0, stop=1, period=500, ratio=0.5):
         beta[i::int(period)] = start + step * i
     return np.clip(beta, start, stop)
 
+
+################################################################################################
+
+
 def exponential_kld_annealing(epochs, start=-35, stop=0, period=500, ratio=0.5):
     '''
     Code from paper 'Cyclical Annealing Schedule: A Simple Approach to Mitigating KL Vanishing'
@@ -87,6 +100,10 @@ def exponential_kld_annealing(epochs, start=-35, stop=0, period=500, ratio=0.5):
     for i in range(int(period)):
         beta[i::int(period)] = np.power(10.0, start + step * i)
     return np.clip(beta, np.power(10.0, start), np.power(10.0, stop))
+
+
+################################################################################################
+
 
 def composit_parser(composit, fmt='{:.5f}', norm=True):
     if isinstance(composit, list):
@@ -104,6 +121,10 @@ def composit_parser(composit, fmt='{:.5f}', norm=True):
     for k, v in sorted(_comp.items(), key=lambda x: Element(x[0]).number):
         comp_str.append(f'{k}_' + fmt.format(v * n))
     return ' '.join(comp_str)
+
+
+################################################################################################
+
 
 def check_precursor_frequency(reactions, comp_key='precursor_comp'):
     prec_idx = {}
@@ -124,6 +145,10 @@ def check_precursor_frequency(reactions, comp_key='precursor_comp'):
                 prec_data[i]['count_rxn'] += 1
                 prec_data[i]['count'] += rxn['count']
     return sorted(prec_data, key=lambda x: x['count_rxn'], reverse=True)
+
+
+################################################################################################
+
 
 def screening_reactions_by_freq(reactions, precursors, minimum_frequency=5):
     freq = {d['precursor_str']:d['count_rxn'] for d in precursors if isinstance(d, dict)}
@@ -170,6 +195,10 @@ def heat_time_norm(x):
 def heat_time_denorm(x):
     return np.power(10, x + 1)
 
+
+################################################################################################
+
+
 def parse_rxn_ids(data):
     rxn_ids_ = []
     n = 0
@@ -180,67 +209,9 @@ def parse_rxn_ids(data):
     is_last = np.hstack([rxn_ids[1:] != rxn_ids[:-1], [True]])
     return rxn_ids, is_last
 
-def compute_metrics_from_cvae_output_v0(output, th=None, print_result=False):
-    pred_has = 1 / (1 + np.exp(-np.hstack(output['pred_has'])))
-    pred_lbl = np.vstack(output['pred_label'])
-    label = np.vstack(output['label']).astype(bool)
-    weight = np.vstack(output['weight'])
-    label_mask = weight > 0
-    has_label = label.sum(1)
-    rxn_ids, is_last = parse_rxn_ids(output['rxn_id'])
 
-    if th is None:
-        ths = np.linspace(0.1, 0.9, 801)
-        has_hit = [np.mean(has_label[is_last] == (pred_has[is_last] > th)) for th in ths]
-        th = ths[np.argmax(has_hit)]
-    acc = np.mean(has_label[is_last] == (pred_has[is_last] > th))
-    has_label = np.ones_like(is_last)
-    has_label[is_last] = pred_has[is_last] > th
+################################################################################################
 
-    out = {f'top_{i+1}':{} for i in range(4)}
-    for i, l, p, m, h in zip(rxn_ids, label, pred_lbl, label_mask, has_label):
-        if i not in out['top_1'].keys():
-            for j in range(4):
-                out[f'top_{j+1}'][i] = [[], []]
-        if m.sum() == 1:
-            for j in range(4):
-                out[f'top_{j+1}'][i][0] = np.hstack([out[f'top_{j+1}'][i][0], [True]])
-                out[f'top_{j+1}'][i][1] = np.hstack([out[f'top_{j+1}'][i][1], [True]])
-        check = h + l.sum()
-        if check == 0:
-            continue
-        elif check == 1:
-            for j in range(4):
-                out[f'top_{j+1}'][i][0] = np.hstack([out[f'top_{j+1}'][i][0], [False]])
-                out[f'top_{j+1}'][i][1] = np.hstack([out[f'top_{j+1}'][i][1], [False]])
-        else:
-            idxs = np.argsort(p)[::-1][:4]
-            p_ = np.zeros_like(m)
-            for j,k in enumerate(idxs):
-                if m[k]:
-                    p_[k] = True
-                out[f'top_{j+1}'][i][0] = np.hstack([out[f'top_{j+1}'][i][0], p_[l]])
-                out[f'top_{j+1}'][i][1] = np.hstack([out[f'top_{j+1}'][i][1], l[p_]])
-    _out = {}
-    for k,vs in out.items():
-        r = np.hstack([v[0] for v in vs.values()]).mean()
-        p = np.hstack([v[1] for v in vs.values()]).mean()
-        f = 2 * r * p / (r + p)
-        r2 = np.mean([np.sum(v[0] == 0) == 0 for v in vs.values()])
-        p2 = np.mean([np.sum(v[1] == 0) == 0 for v in vs.values()])
-        f2 = 2 * r2 * p2 / (r2 + p2)
-        _out[k] = [f, p, r, f2, p2, r2]
-    
-    if print_result:
-        print('Null label hit accuracy : {:.4f} (th: {:.3f})'.format(acc, th))
-        print('-' * 56)
-        print('{:7s}| {:23s}| {}'.format('', 'Precursor', 'Reaction'))
-        s = ' '.join([f'{s:7s}' for s in ['F1','Prec','Recall']])
-        print('{:7s}| {}| {}'.format('', s, s))
-        print('-' * 56)
-        for k, vs in _out.items():
-            print('{:6s} | {} | {}'.format(k, '  '.join([f'{v:.4f}' for v in vs[:3]]), '  '.join([f'{v:.4f}' for v in vs[3:]])))
-    return acc, th, _out
 
 def sort_precursor_by_target_element(target, precursor):
     j = []
@@ -253,3 +224,115 @@ def sort_precursor_by_target_element(target, precursor):
     precursor_str = [Composition(p).get_integer_formula_and_factor()[0] for p in precursor]
     return target_str, [precursor_str[_j] for _j in j]
 
+
+
+################################################################################################
+
+def parse_cvae_output_v0(output, th=None, ths=np.linspace(0.1, 0.9, 81)):
+    rxn_id, is_last = parse_rxn_ids(output['rxn_id'])
+    pred_has = np.hstack(output['pred_has'])[is_last]
+    pred_lbl = np.vstack(output['pred_label'])
+    target_label = np.vstack(output['label'])
+    target_has = target_label.sum(1)[is_last]
+    if th is None:
+        accs = [np.mean(target_has == (pred_has > th)) for th in ths]
+        th = ths[np.argmax(accs)]
+    acc = np.mean(target_has == (pred_has > th))
+    return {'th':th, 'acc':acc, 'rxn_id':rxn_id,
+            'pred_has':pred_has, 'pred_label':pred_lbl, 
+            'target_has':target_has, 'target_label':target_label,
+    }
+
+# def compute_metrics_from_cvae_output_v0(output, n_top=4, print_result=False):
+#     rxn_id = output['rxn_id']
+#     label = 
+
+#     top_output = {f'top_{i+1}':{} for i in range(n_top)}
+#     for i, l, p, m, h in zip(rxn_id, label, pred_lbl, label_mask, has_label):
+#         if i not in top_output['top_1'].keys():
+#             for j in range(n_top):
+#                 top_output[f'top_{j+1}'][i] = [[], []]
+#         if m.sum() == 1:
+#             for j in range(n_top):
+#                 top_output[f'top_{j+1}'][i][0] = np.hstack([top_output[f'top_{j+1}'][i][0], [True]])
+#                 top_output[f'top_{j+1}'][i][1] = np.hstack([top_output[f'top_{j+1}'][i][1], [True]])
+#             continue
+#         check = h + l.sum()
+#         if check == 0:
+#             continue
+#         elif check == 1:
+#             for j in range(n_top):
+#                 top_output[f'top_{j+1}'][i][0] = np.hstack([top_output[f'top_{j+1}'][i][0], [False]])
+#                 top_output[f'top_{j+1}'][i][1] = np.hstack([top_output[f'top_{j+1}'][i][1], [False]])
+#         else:
+#             idxs = np.argsort(p)[::-1][:n_top]
+#             p_ = np.zeros_like(m)
+#             for j,k in enumerate(idxs):
+#                 if m[k]:
+#                     p_[k] = True
+#                 top_output[f'top_{j+1}'][i][0] = np.hstack([top_output[f'top_{j+1}'][i][0], p_[l]])
+#                 top_output[f'top_{j+1}'][i][1] = np.hstack([top_output[f'top_{j+1}'][i][1], l[p_]])
+#     output_metric = {}
+#     for k, vs in top_output.items():
+#         r = np.hstack([v[0] for v in vs.values()]).mean()
+#         p = np.hstack([v[1] for v in vs.values()]).mean()
+#         f = 2 * r * p / (r + p)
+#         r2 = np.mean([np.sum(v[0] == 0) == 0 for v in vs.values()])
+#         p2 = np.mean([np.sum(v[1] == 0) == 0 for v in vs.values()])
+#         f2 = 2 * r2 * p2 / (r2 + p2)
+#         output_metric[k] = [f, p, r, f2, p2, r2]
+    
+#     if print_result:
+#         print('Null label hit accuracy : {:.4f} (th: {:.3f})'.format(acc, th))
+#         print('-' * 56)
+#         print('{:7s}| {:23s}| {}'.format('', 'Precursor', 'Reaction'))
+#         s = ' '.join([f'{s:7s}' for s in ['F1','Prec','Recall']])
+#         print('{:7s}| {}| {}'.format('', s, s))
+#         print('-' * 56)
+#         for k, vs in output_metric.items():
+#             print('{:6s} | {} | {}'.format(k, '  '.join([f'{v:.4f}' for v in vs[:3]]), '  '.join([f'{v:.4f}' for v in vs[3:]])))
+#     return acc, th, output_metric, parsed_output
+
+def get_likely_list(target, metals, preds, pred_has, precursor_reference):
+    ele_mask = [precursor_reference.get_weight(e).reshape(-1) > 0 for e in target.keys() if e not in MetalElements]
+    sorted_probs = []
+    for metal, prob in zip(metals, preds):
+        step_probs = []
+        idxs = np.argsort(prob)[::-1]
+        p_sum = 0
+        for idx in idxs:
+            p = prob[idx]
+            if p_sum > 0.99 or p < 0.01:
+                break
+            p_sum += p
+            step_probs.append([p, idx])
+        if metal == 'none':
+            step_probs = [[1 - pred_has, precursor_reference._ligand_str.index('')]] + [[_p * pred_has, _i] for _p,_i in step_probs]
+        sorted_probs.append(step_probs)
+
+    likelies = []
+    l_sum = 0
+    for comb in product(*sorted_probs):
+        if np.sum([c[0] for c in comb]) < 0.1:
+            continue
+        labels = [c[1] for c in comb]
+        skip = False
+        if len(ele_mask) != 0:
+            label_mask = np.zeros_like(ele_mask[0], dtype=bool)
+            label_mask[labels] = True
+            for _mask in ele_mask:
+                if (_mask & label_mask).sum() == 0:
+                    skip = True
+                    break
+        if skip:
+            continue
+        l = np.prod([c[0] for c in comb])
+        p = []
+        for metal, label in zip(metals, labels):
+            if metal == 'none' and label == precursor_reference._ligand_str.index(''):
+                continue
+            p_comp = precursor_reference.get_info(metal, label)['precursor_comp']
+            p.append(Composition(p_comp).get_integer_formula_and_factor()[0])
+        likelies.append((tuple(p), l))
+        l_sum += l
+    return [(l[0], l[1]/l_sum) for l in sorted(likelies, key=lambda x: x[1], reverse=True)]

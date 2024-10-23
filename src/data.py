@@ -10,7 +10,7 @@ from typing import Dict, List
 class BaseData:
     def __init__(self, 
                  data : Dict = {}, 
-                 base_info_attrs : List[str] = ['id','id_urxn','count','doi','year','year_doc'],
+                 base_info_attrs : List[str] = ['id_target','id_reaction','count','doi','year','year_doc'],
                  info_attrs : List[str] = [],
                  *args, **kwargs):        
         self._info_attrs = []
@@ -106,7 +106,7 @@ class ReactionData(BaseData):
         self.target_feat = composition_to_feature(composit_dict=target_comp, 
                                                   feature_type=feat_type, 
                                                   by_fraction=True)
-        self._info_attrs.append('target_comp')
+        self._info_attrs.extend(['target_comp', 'metals'])
         self._feature_attrs.append('target_feat')
 
         # metal
@@ -122,6 +122,7 @@ class ReactionData(BaseData):
             else:
                 non_metals.update({ele:1})
         meta_feat.append(composition_to_feature(non_metals, feat_type, by_fraction=False))
+        self.metals = np.hstack([metals, ['none']])
         self.meta_feat = np.vstack(meta_feat)
         self.weight.append(precursor_ref.get_weight('none') * weight)
         self.weight = np.vstack(self.weight)
@@ -130,7 +131,7 @@ class ReactionData(BaseData):
 
         # label and precursor
         if isinstance(precursor_comps, List) and len(precursor_comps) != 0:
-            self.precursor_comps = precursor_comps
+            self.precursor_comp = precursor_comps
             self.label = np.zeros((len(meta_feat), precursor_ref.NUM_LABEL), dtype=np.float32)
             dummy = np.zeros_like(composition_to_feature({'Li':1.0}, feat_type, by_fraction=False)).reshape(1,-1)
             precursor_feat = np.repeat(dummy, len(meta_feat), axis=0)
@@ -144,7 +145,7 @@ class ReactionData(BaseData):
                 self.label[i, j] = 1
                 precursor_feat[i] += composition_to_feature(precursor_comp, feat_type, by_fraction=True).reshape(-1)
             self.precursor_feat = np.vstack(precursor_feat)
-            self._info_attrs.append('precursor_comps')
+            self._info_attrs.append('precursor_comp')
             self._feature_attrs.extend(['label','precursor_feat'])
 
         # conditions
@@ -296,7 +297,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 continue
             if hasattr(self, f'num_{attr}'):
                 n1 = getattr(self._data[0], attr).shape[-1]
-                n2 = getattr(self._data[-1], attr.shape[-1])
+                n2 = getattr(self._data[-1], attr).shape[-1]
                 if n1 != n2:
                     raise ValueError('Inconsistent data dimension detected', f'num_{attr}')
             else:

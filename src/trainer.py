@@ -97,23 +97,43 @@ class AETrainer(BaseTrainer):
 class VAETrainer(BaseTrainer): # Classification
     def __init__(self, model, lr, device='cuda', 
                  crit=torch.nn.CrossEntropyLoss(reduction='none'),
-                 feat_keys = ['label','label_mask'], output_keys = ['pred','kld','mu','log_var','z']):
+                 feat_keys = ['label','weight','rxn_id'], 
+                 output_keys = ['pred_has','pred_label','kld','mu','log_var','z']):
         super().__init__(model, lr, device, crit, feat_keys, output_keys)
     
-    def _eval_batch(self, batch, compute_loss=True, beta=0.1):
+    def _eval_batch(self, batch, compute_loss=True, beta=0.01):
         _feat, _ = batch
-        feat = {k:v.to(self.device) for k,v in _feat.items() if isinstance(v, torch.Tensor)}
-        pred, kld, l, z = self.model(**feat)
+        precursor_feat = _feat['precursor_feat'].to(self.device)
+        condition = torch.hstack([_feat['meta_feat'], _feat['condition_feat'][_feat['rxn_id']]]).to(self.device)
+        edge_index = _feat['edge_index'].to(self.device)
+        edge_attr = _feat['edge_attr'].to(self.device)
+        weight = _feat['weight'].to(self.device)
+
+        pred, kld, l, z = self.model(x=precursor_feat, condition=condition, edge_index=edge_index, edge_attr=edge_attr)
         mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
-        output = [pred.detach().cpu().numpy(), kld.detach().cpu().numpy(), mu.numpy(), log_var.exp().numpy(), z.detach().cpu().numpy()]
+        pred_has = pred[:, 0]
+        pred_lbl = pred[:, 1:] + ((weight > 0).long().float() - 1) * 1e5
+        output = [1/(1 + torch.exp(-pred_has.detach())), 
+                  torch.nn.functional.softmax(pred_lbl.detach(), dim=1), 
+                  kld.detach(), mu, log_var.exp(), z.detach()]
         if compute_loss:
-            ce_loss = self.crit(pred, feat['label'])[feat['label_mask']].mean()
-#            mse = torch.mean(torch.sum(torch.square(feat['x'] - pvec), -1))
-            loss = ce_loss + beta * kld.sum()
+            is_last = torch.from_numpy(np.hstack([_feat['rxn_id'][1:] != _feat['rxn_id'][:-1], [True]])).bool()
+
+            label = _feat['label'].to(self.device)
+            label_has = label.sum(1)
+            label_loc, label_index = torch.where(label)
+            w = weight[label.bool()]
+            w[pred_lbl[label_loc].argmax(1) != label_index] = 1.0
+
+            bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')(pred_has, label_has)[is_last]
+#            focal_loss = (label_has[is_last] - 0.9).abs() * bce_loss * (1 - torch.exp(-bce_loss)) ** 2
+
+            ce_loss = self.crit(pred_lbl[label_loc], label_index) * w
+            loss = bce_loss.mean() + ce_loss.mean() + beta * kld.sum()
             return loss, output
         else:
             return output
-        
+
 class SequenceTrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda', 
                  crit=torch.nn.CrossEntropyLoss(reduction='none'),

@@ -43,9 +43,9 @@ class BaseNetwork(torch.nn.Module):
         model_path = os.path.join(path, file_name)
         
         with open(model_path,'rb') as f:
-            obj = pickle.load(f)
-        model_param = obj['model_param']
-        model_state_dict = {k:torch.from_numpy(v) for k,v in obj['state_dict'].items()}
+            saved_data = pickle.load(f)
+        model_param = saved_data['model_param']
+        model_state_dict = {k:torch.from_numpy(v) for k,v in saved_data['state_dict'].items()}
         self.__init__(**model_param)
         self.load_state_dict(model_state_dict)
         self.requires_grad_(requires_grad=requires_grad)
@@ -446,20 +446,20 @@ class AutoEncoder(BaseNetwork):
         return l, y
 
     def save(self, path, prefix, overwrite=True):
-        self.encoder._save(path, f'{prefix}_encoder.model', overwrite)
-        self.decoder._save(path, f'{prefix}_decoder.model', overwrite)
+        self.encoder._save(path, f'{prefix}.encoder.torch', overwrite)
+        self.decoder._save(path, f'{prefix}.decoder.torch', overwrite)
+        self._save(path, f'{prefix}.model.torch', overwrite)
 
     def load_encoder(self, path, prefix, requires_grad=True):
-        self.encoder._load(path, file_name=f'{prefix}_encoder.model', requires_grad=requires_grad)
+        self.encoder._load(path, file_name=f'{prefix}.encoder.torch', requires_grad=requires_grad)
         return self.encoder
 
     def load_decoder(self, path, prefix, requires_grad=True):
-        self.decoder._load(path, file_name=f'{prefix}_decoder.model', requires_grad=requires_grad)
+        self.decoder._load(path, file_name=f'{prefix}.decoder.torch', requires_grad=requires_grad)
         return self.decoder
 
     def load(self, path, prefix, requires_grad=True):
-        self.load_encoder(path, prefix, requires_grad)
-        self.load_decoder(path, prefix, requires_grad)
+        self._load(path, file_name=f'{prefix}.model.torch', requires_grad=requires_grad)
         return self
 
 class VAE(AutoEncoder):
@@ -529,8 +529,8 @@ class CVAE(VAE):
                  encoder_hidden_layers:int = 2,
                  decoder_hidden_dim:int = 32,
                  decoder_hidden_layers:int = 2,
-                 batch_norm:bool = False, 
-                 dropout:float = 0.4,
+                 batch_norm:bool = True, 
+                 dropout:float = 0.0,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         super(AutoEncoder, self).__init__(input_dim = input_dim,
@@ -554,7 +554,7 @@ class CVAE(VAE):
                                  activation = activation)
         
         self.decoder = FCNNBlock(input_dim = latent_dim + condition_dim, 
-                                 output_dim = output_dim if isinstance(output_dim, int) else input_dim,                                  
+                                 output_dim = output_dim if isinstance(output_dim, int) else input_dim,
                                  hidden_dim = decoder_hidden_dim, 
                                  hidden_layers = decoder_hidden_layers, 
                                  batch_norm = batch_norm, 
@@ -569,7 +569,7 @@ class CVAE(VAE):
     
     def sampling(self, n, condition, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
-        y = self.decoder(torch.concat([z, condition.repeat((n, 1)) ], -1))
+        y = self.decoder(torch.concat([z, condition], -1))
         return y
 
 class GraphCVAE(VAE):
@@ -588,7 +588,7 @@ class GraphCVAE(VAE):
                  decoder_hidden_dim:int = 32,
                  decoder_hidden_layers:int = 2,
                  batch_norm:bool = True, 
-                 dropout:float = 0.5,
+                 dropout:float = 0.0,
                  activation:str = 'LeakyReLU',
                  **kwargs): 
         
@@ -646,7 +646,9 @@ class GraphCVAE(VAE):
     def forward(self, x, edge_index, edge_attr, condition, *args, **kwargs):
         l = self.encoder(x = x, edge_index = edge_index, edge_attr = edge_attr)
         z, kld = self.reparameterization(l)
-        y = self.decoder(x = torch.concat([z, condition], -1), edge_index = edge_index, edge_attr = edge_attr)
+        y = self.decoder(x = torch.concat([z, condition], -1), 
+                         edge_index = edge_index, 
+                         edge_attr = edge_attr)
         return y, kld, l, z
 
     def sampling(self, n, edge_index, edge_attr, condition, *args, **kwargs):

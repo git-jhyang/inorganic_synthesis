@@ -517,7 +517,7 @@ class VAE(AutoEncoder):
     def sampling(self, n, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
         y = self.decoder(z)
-        return y
+        return y, z
 
 class CVAE(VAE):
     def __init__(self,
@@ -570,7 +570,7 @@ class CVAE(VAE):
     def sampling(self, n, condition, *args, **kwargs):
         z = torch.randn(n, self._model_param['latent_dim']).to(self.device)
         y = self.decoder(torch.concat([z, condition], -1))
-        return y
+        return y, z
 
 class GraphCVAE(VAE):
     def __init__(self,
@@ -652,10 +652,12 @@ class GraphCVAE(VAE):
         return y, kld, l, z
 
     def sampling(self, n, edge_index, edge_attr, condition, *args, **kwargs):
-        y = []
+        ys = []
+        zs = []
         for _ in range(n):
             z = torch.randn(condition.shape[0], self._model_param['latent_dim']).to(self.device)
-            y.append(self.decoder(x = torch.concat([z, condition], -1),
-                                  edge_index = edge_index,
-                                  edge_attr = edge_attr))
-        return y
+            ys.append(self.decoder(x = torch.concat([z, condition], -1),
+                                   edge_index = edge_index,
+                                   edge_attr = edge_attr))
+            zs.append(z)
+        return ys, zs

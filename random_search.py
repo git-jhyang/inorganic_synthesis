@@ -3,7 +3,7 @@ import train as T
 import numpy as np
 
 
-feature_type = ['composit','cgcnn','elemnet','magpie','mat2vec','matscholar','megnet16','oliynyk',]
+feature_type = ['composit','cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliynyk_sc',]
 batch_size = [64, 128, 256]
 hidden_dims = [64, 128, 256]
 hidden_layers = [2, 4, 6]

@@ -1,0 +1,36 @@
+multiprocessing.pool.RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 125, in worker
+    result = (True, func(*args, **kwds))
+  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 51, in starmapstar
+    return list(itertools.starmap(args[0], args[1]))
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/random_search.py", line 32, in exc
+    T.main(T.args)
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/train.py", line 62, in main
+    DS.from_file(data_path=args.data_path,
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/data.py", line 341, in from_file
+    self.from_dataset(dataset, extend_dataset = extend_dataset,
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/data.py", line 364, in from_dataset
+    self.from_data(data = data,
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/data.py", line 537, in from_data
+    GraphData(data = data,
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/data.py", line 176, in __init__
+    super().__init__(data = data,
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/data.py", line 106, in __init__
+    self.target_feat = composition_to_feature(composit_dict=target_comp,
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/src/feature.py", line 48, in composition_to_feature
+    raise ValueError(FEAT_EXCEPTION_WARNING.format(feature_type),
+ValueError: ('feature type [oliynyk] is not supported. ', 'Possible feature types:', ['composit', 'composit_ext', 'cgcnn', 'elemnet', 'magpie_sc', 'mat2vec', 'matscholar', 'megnet16', 'oliynyk_sc'], 'Feature type is set to composit')
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jhyang/WORKSPACES/CODES/inorganic_synthesis/random_search.py", line 36, in <module>
+    pool.starmap(exc, [(i, shared_list) for i in range(600)])
+  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 372, in starmap
+    return self._map_async(func, iterable, starmapstar, chunksize).get()
+  File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 771, in get
+    raise self._value
+ValueError: ('feature type [oliynyk] is not supported. ', 'Possible feature types:', ['composit', 'composit_ext', 'cgcnn', 'elemnet', 'magpie_sc', 'mat2vec', 'matscholar', 'megnet16', 'oliynyk_sc'], 'Feature type is set to composit')

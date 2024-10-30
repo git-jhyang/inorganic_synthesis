@@ -11,6 +11,7 @@ for k in ['cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliyn
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'elmd', f'{k}.json')) as f:
         elmd_data = json.load(f)
     elmd[k] = elmd_data
+    elmd[k.replace('_sc','')] = elmd_data
 
 def composition_to_feature(composit_dict, 
                            feature_type='composit', 

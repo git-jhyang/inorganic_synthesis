@@ -134,6 +134,13 @@ class VAETrainer(BaseTrainer): # Classification
         else:
             return output
 
+    def _sample_batch(self, batch):
+        _feat, _ = batch
+        condition = torch.hstack([_feat['meta_feat'], _feat['condition_feat'][_feat['rxn_id']]]).to(self.device)
+        edge_index = _feat['edge_index'].to(self.device)
+        edge_attr = _feat['edge_attr'].to(self.device)
+        weight = _feat['weight'].to(self.device)
+
 class SequenceTrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda', 
                  crit=torch.nn.CrossEntropyLoss(reduction='none'),

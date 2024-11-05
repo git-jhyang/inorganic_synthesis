@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from src.utils import get_is_last
 
 class BaseTrainer:
     def __init__(self, model, lr, device='cpu', crit=torch.nn.MSELoss(),
@@ -51,25 +52,40 @@ class BaseTrainer:
     def _parse_output(self, batch, output):
         feat, info = batch
         if self._output is None:
-            self._output = {'info':info}
+            # init
+            self._output = {'info':[]}
+            self._n = 0
             if feat is not None:
-                for k in self.feat_keys:
-                    if isinstance(feat[k], torch.Tensor):
-                        self._output[k] = [feat[k].cpu().numpy()]
-                    else:
-                        self._output[k] = [np.array(feat[k])]
-            for k, v in zip(self.output_keys, output):
-                self._output[k] = [v.cpu().numpy()]
-        else:
-            self._output['info'].extend(info)
-            if feat is not None:
-                for k in self.feat_keys:
-                    if isinstance(feat[k], torch.Tensor):
-                        self._output[k].append(feat[k].cpu().numpy())
-                    else:
-                        self._output[k].append(np.array(feat[k]))
-            for k, v in zip(self.output_keys, output):
-                self._output[k].append(v.cpu().numpy())
+                self._output.update({k:[] for k in self.feat_keys})
+            self._output.update({k:[] for k in self.output_keys})
+        
+        self._output['info'].extend(info)
+        for k in self.feat_keys:
+            if isinstance(feat[k], torch.Tensor):
+                value = feat[k].cpu().numpy()
+            else:
+                value = np.array(feat[k])
+            ########################################################################
+            # extra rule for reaction id
+            if k == 'rxn_id':
+                value += self._n - value.min()
+                self._n = value.max() + 1
+            ########################################################################
+
+            if len(value.shape) == 1:
+                self._output[k] = np.hstack([self._output[k], value])
+            elif len(self._output[k]) == 0:
+                self._output[k] = value
+            else:
+                self._output[k] = np.vstack([self._output[k], value])
+        for k, v in zip(self.output_keys, output):
+            v = v.cpu().numpy()
+            if len(v.shape) == 1:
+                self._output[k] = np.hstack([self._output[k], v])
+            elif len(self._output[k]) == 0:
+                self._output[k] = v
+            else:
+                self._output[k] = np.vstack([self._output[k], v])
 
     def _eval_batch(self, batch):
         pass
@@ -119,14 +135,13 @@ class VAETrainer(BaseTrainer): # Classification
                   torch.nn.functional.softmax(pred_lbl.detach(), dim=1), 
                   kld.detach(), mu, log_var.exp(), z.detach()]
         if compute_loss:
-            is_last = torch.from_numpy(np.hstack([_feat['rxn_id'][1:] != _feat['rxn_id'][:-1], [True]])).bool()
-
             label = _feat['label'].to(self.device)
             label_has = label.sum(1)
             label_loc, label_index = torch.where(label)
             w = weight[label.bool()]
             w[pred_lbl[label_loc].argmax(1) != label_index] = 1.0
 
+            is_last = get_is_last(_feat['rxn_id'])
             bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')(pred_has, label_has)[is_last]
 #            focal_loss = (label_has[is_last] - 0.9).abs() * bce_loss * (1 - torch.exp(-bce_loss)) ** 2
 
@@ -136,12 +151,32 @@ class VAETrainer(BaseTrainer): # Classification
         else:
             return output
 
-    def _sample_batch(self, batch):
-        _feat, _ = batch
-        condition = torch.hstack([_feat['meta_feat'], _feat['condition_feat'][_feat['rxn_id']]]).to(self.device)
-        edge_index = _feat['edge_index'].to(self.device)
-        edge_attr = _feat['edge_attr'].to(self.device)
-        weight = _feat['weight'].to(self.device)
+    def sampling(self, dataloader, n_sample):
+        output = {'info':[], 'prob':[], 'has_last':[], 'z':[], 'rxn_id':[]}
+        for _feat, info in dataloader:
+            condition = _feat['condition_feat'].to(self.device)
+            edge_index = _feat['edge_index'].to(self.device)
+            edge_attr = _feat['edge_attr'].to(self.device)
+            weight = _feat['weight'].unsqueeze(1).to(self.device)
+            rxn_id = torch.from_numpy(_feat['rxn_id']).long().to(self.device)
+            is_last = get_is_last(_feat['rxn_id'])
+            with torch.no_grad():
+                y, z = self.model.sampling(n=n_sample, edge_index=edge_index, edge_attr=edge_attr, 
+                                           condition=condition, reaction_idx=rxn_id)
+            prob = torch.nn.functional.softmax(y[..., 1:] + ((weight > 0).float() - 1) * 5000, -1)
+            has_last = torch.nn.functional.sigmoid(y[is_last, :, 0])
+            output['info'].extend(info)
+            if len(output['z']) == 0:
+                output['z'] = z.cpu().numpy()
+                output['prob'] = prob.cpu().numpy()
+                output['has_last'] = has_last.cpu().numpy()
+                output['rxn_id'] = rxn_id.cpu().numpy()
+            else:
+                output['z'] = np.vstack([output['z'], z.cpu().numpy()])
+                output['prob'] = np.vstack([output['prob'], prob.cpu().numpy()])
+                output['has_last'] = np.vstack([output['has_last'], has_last.cpu().numpy()])
+                output['rxn_id'] = np.hstack([output['rxn_id'], rxn_id.cpu().numpy() + output['rxn_id'].max() + 1])
+        return output
 
 class SequenceTrainer(BaseTrainer):
     def __init__(self, model, lr, device='cuda', 

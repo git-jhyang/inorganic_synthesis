@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from src.networks import GraphCVAE
 from src.data import ReactionGraphDataset
 from src.trainer import VAETrainer
-from src.utils import NEAR_ZERO, linear_kld_annealing, parse_cvae_output_v0
+from src.utils import NEAR_ZERO, linear_kld_annealing, compute_acc, compute_top_accuracy
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -60,8 +60,8 @@ def main(args):
 
     DS = ReactionGraphDataset(feat_type=args.data_feature_type)
     DS.from_file(data_path=args.data_path,
-                 heat_temp_fnc = lambda x: x['heat_temp_med'],
-                 heat_time_fnc = lambda x: x['heat_time_med'])
+                 heat_temp_fnc = lambda x: x['heat_temp']['median'],
+                 heat_time_fnc = lambda x: x['heat_time']['median'])
 
     output_path = f'{args.output_path}/{identifier}'
     if os.path.isdir(output_path):
@@ -115,24 +115,22 @@ def main(args):
             test_loss, test_output = trainer.test(test_dl, beta=beta)
             th = None
             for sfx, loss, output in zip(['Valid','Test'], [valid_loss, test_loss], [valid_output, test_output]):
-                out = parse_cvae_output_v0(output, th)
-                th = out['th']
-                pred_label = out['pred_label'].argmax(1)
-                target_mask, target_label = np.where(out['target_label'])
-                f1 = f1_score(target_label, pred_label[target_mask], average='micro')
-                acc = accuracy_score(target_label, pred_label[target_mask])
+                acc, th = compute_acc(output, th)
+                avg_rank, label_acc, label_recall = compute_top_accuracy(output)
+
                 writer.add_scalar(f'Loss/{sfx}', loss, epoch)
                 writer.add_scalar(f'KLD/{sfx}', np.vstack(output['kld']).sum(), epoch)
 
-                writer.add_scalar(f'ACC/{sfx}', acc, epoch)
-                writer.add_scalar(f'F1/{sfx}', f1, epoch)
-                writer.add_scalar(f'HitAcc/{sfx}', out['acc'], epoch)
+                writer.add_scalar(f'Rank/{sfx}', avg_rank, epoch)
+                writer.add_scalar(f'Acc/{sfx}', label_acc, epoch)
+                writer.add_scalar(f'Top_3_Recall/{sfx}', label_recall, epoch)
+                writer.add_scalar(f'Hit/{sfx}Acc', acc, epoch)
 
                 if epoch % (args.train_logging_interval * 10) == 0:
                     writer.add_histogram(f'Z/{sfx}', np.vstack(output['z']), epoch)
                     writer.add_histogram(f'Mu/{sfx}', np.vstack(output['mu']), epoch)
                     writer.add_histogram(f'LogVar/{sfx}', np.vstack(output['log_var']), epoch)
-            writer.add_scalar('HitTh', out['th'], epoch)
+            writer.add_scalar('Hit/Th', th, epoch)
 
             if epoch < 50:
                 pass
@@ -151,7 +149,7 @@ def main(args):
                 count += args.train_logging_interval
                 if args.train_early_stop > 0 and count > args.train_early_stop:
                     return
-                
+
             if args.train_logging:
                 print('{:5d} ({:3d}) | {:8.4f} | {:8.4f} {:10.6f} | {:8.4f} {:10.6f}'.format(
                     epoch, count, train_loss, 

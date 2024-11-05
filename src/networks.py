@@ -661,4 +661,4 @@ class GraphCVAE(VAE):
                                    edge_index = edge_index,
                                    edge_attr = edge_attr))
             zs.append(z)
-        return ys, zs
+        return torch.stack(ys).transpose(1,0), torch.stack(zs).transpose(1,0) # dim_data, dim_sample, dim_label

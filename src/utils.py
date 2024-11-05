@@ -198,20 +198,10 @@ def heat_time_denorm(x):
 
 ################################################################################################
 
-
-def parse_rxn_ids(data):
-    rxn_ids_ = []
-    n = 0
-    for rxn_id in data:
-        rxn_ids_.append(rxn_id + n - rxn_id.min())
-        n += rxn_id.max() + 1
-    rxn_ids = np.hstack(rxn_ids_)
-    is_last = np.hstack([rxn_ids[1:] != rxn_ids[:-1], [True]])
-    return rxn_ids, is_last
-
+def get_is_last(reaction_id):
+    return np.hstack([reaction_id[1:] != reaction_id[:-1], [True]])
 
 ################################################################################################
-
 
 def sort_precursor_by_target_element(target, precursor):
     j = []
@@ -224,28 +214,25 @@ def sort_precursor_by_target_element(target, precursor):
     precursor_str = [Composition(p).get_integer_formula_and_factor()[0] for p in precursor]
     return target_str, [precursor_str[_j] for _j in j]
 
-
-
 ################################################################################################
 
-def parse_cvae_output_v0(output, th=None, ths=np.linspace(0.1, 0.9, 81)):
-    rxn_id, is_last = parse_rxn_ids(output['rxn_id'])
-    kld = np.vstack(output['kld']).sum()
-    pred_has = np.hstack(output['pred_has'])
-    pred_lbl = np.vstack(output['pred_label'])
-    target_label = np.vstack(output['label'])
-    target_has = target_label.sum(1)
-    mask = np.vstack(output['weight']) > 0
-    z = np.vstack(output['z'])
+def compute_acc(output, th=None, ths=np.linspace(0.1, 0.9, 81)):
+    is_last = get_is_last(output['rxn_id'])
     if th is None:
-        accs = [np.mean(target_has[is_last] == (pred_has[is_last] > th)) for th in ths]
+        accs = [np.mean(output['label'].sum(1)[is_last] == (output['pred_has'][is_last] > th).astype(float)) for th in ths]
         th = ths[np.argmax(accs)]
-    acc = np.mean(target_has[is_last] == (pred_has[is_last] > th))
-    return {'th':th, 'acc':acc, 'kld':kld, 'rxn_id':rxn_id, 'is_last':is_last,
-            'pred_has':pred_has, 'pred_label':pred_lbl, 
-            'target_has':target_has, 'target_label':target_label,
-            'mask':mask, 'z':z 
-    }
+    acc = np.mean(output['label'].sum(1)[is_last] == (output['pred_has'][is_last] > th).astype(float))
+    return acc, th
+
+def compute_top_accuracy(output):
+    out = []
+    for p, l in zip(output['pred_label'], output['label']):
+        if l.sum() == 0:
+            continue
+        idxs = np.argsort(p)[::-1].tolist()
+        out.append(idxs.index(l.argmax()))
+    out = np.array(out)
+    return np.mean(out), np.mean(out < 1), np.mean(out < 3) # mean_label_rank, accuracy, top-3 recall
 
 # def compute_metrics_from_cvae_output_v0(output, n_top=4, print_result=False):
 #     rxn_id = output['rxn_id']

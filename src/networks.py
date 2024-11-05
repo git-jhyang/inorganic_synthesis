@@ -643,20 +643,21 @@ class GraphCVAE(VAE):
                              dropout=dropout,
                              activation=activation)
 
-    def forward(self, x, edge_index, edge_attr, condition, *args, **kwargs):
+    def forward(self, x, edge_index, edge_attr, condition, reaction_idx, *args, **kwargs):
         l = self.encoder(x = x, edge_index = edge_index, edge_attr = edge_attr)
-        z, kld = self.reparameterization(l)
-        y = self.decoder(x = torch.concat([z, condition], -1), 
+        l_ = pyg.nn.global_mean_pool(l, reaction_idx)
+        z, kld = self.reparameterization(l_)
+        y = self.decoder(x = torch.concat([z, condition], -1)[reaction_idx], 
                          edge_index = edge_index, 
                          edge_attr = edge_attr)
-        return y, kld, l, z
+        return y, kld, l_, z
 
-    def sampling(self, n, edge_index, edge_attr, condition, *args, **kwargs):
+    def sampling(self, n, edge_index, edge_attr, condition, reaction_idx, *args, **kwargs):
         ys = []
         zs = []
         for _ in range(n):
             z = torch.randn(condition.shape[0], self._model_param['latent_dim']).to(self.device)
-            ys.append(self.decoder(x = torch.concat([z, condition], -1),
+            ys.append(self.decoder(x = torch.concat([z, condition], -1)[reaction_idx],
                                    edge_index = edge_index,
                                    edge_attr = edge_attr))
             zs.append(z)

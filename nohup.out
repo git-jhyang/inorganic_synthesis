@@ -34,5 +34,3 @@ Traceback (most recent call last):
   File "/home/jhyang/anaconda3/envs/isyn2/lib/python3.9/multiprocessing/pool.py", line 771, in get
     raise self._value
 ValueError: ('feature type [oliynyk] is not supported. ', 'Possible feature types:', ['composit', 'composit_ext', 'cgcnn', 'elemnet', 'magpie_sc', 'mat2vec', 'matscholar', 'megnet16', 'oliynyk_sc'], 'Feature type is set to composit')
-Warning: element [Pu] is not included in feature type "oliynyk_sc"
-

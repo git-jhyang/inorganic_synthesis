@@ -104,12 +104,14 @@ class VAETrainer(BaseTrainer): # Classification
     def _eval_batch(self, batch, compute_loss=True, beta=0.01):
         _feat, _ = batch
         precursor_feat = _feat['precursor_feat'].to(self.device)
-        condition = torch.hstack([_feat['meta_feat'], _feat['condition_feat'][_feat['rxn_id']]]).to(self.device)
+#        condition = torch.hstack([_feat['meta_feat'], _feat['condition_feat'][_feat['rxn_id']]]).to(self.device)
+        condition = _feat['condition_feat'].to(self.device)
         edge_index = _feat['edge_index'].to(self.device)
         edge_attr = _feat['edge_attr'].to(self.device)
         weight = _feat['weight'].to(self.device)
+        rxn_id = torch.from_numpy(_feat['rxn_id']).long().to(self.device)
 
-        pred, kld, l, z = self.model(x=precursor_feat, condition=condition, edge_index=edge_index, edge_attr=edge_attr)
+        pred, kld, l, z = self.model(x=precursor_feat, condition=condition, edge_index=edge_index, edge_attr=edge_attr, reaction_idx=rxn_id)
         mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
         pred_has = pred[:, 0]
         pred_lbl = pred[:, 1:] + ((weight > 0).long().float() - 1) * 1e5

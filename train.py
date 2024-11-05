@@ -88,7 +88,7 @@ def main(args):
 
     model = GraphCVAE(input_dim = DS.num_precursor_feat, 
                       latent_dim = args.model_latent_dim, 
-                      condition_dim = DS.num_meta_feat + DS.has_temp_info + DS.has_time_info,
+                      condition_dim = DS.has_temp_info + DS.has_time_info,
                       edge_dim = DS.num_edge_feat,
                       output_dim = DS.NUM_LABEL + 1, 
                       graph = args.model_graph,
@@ -101,8 +101,8 @@ def main(args):
     )
 
     trainer = VAETrainer(model, 1e-5, device='cuda')
-    betaset = linear_kld_annealing(args.train_epochs, start=NEAR_ZERO, stop=1, 
-                                   ratio=0.5, period=1000)
+    betaset = linear_kld_annealing(args.train_epochs, start=NEAR_ZERO, stop=1,
+                                   ratio=0.5, period=100)
     best_loss = 1e5
     count = 0
     

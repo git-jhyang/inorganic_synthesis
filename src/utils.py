@@ -327,3 +327,100 @@ def get_likely_list(target, metals, preds, pred_has, precursor_reference):
         likelies.append((tuple(p), l))
         l_sum += l
     return [(l[0], l[1]/l_sum) for l in sorted(likelies, key=lambda x: x[1], reverse=True)]
+
+
+def train_test_split(n_data, valid_ratio=None, test_ratio=None, seed=None):
+    if isinstance(seed, int):
+        np.random.seed(seed)
+    if valid_ratio is None:
+        n_valid = 0
+    else:
+        n_valid = int(n_data * valid_ratio)
+    if test_ratio is None:
+        n_test = 0
+    else:
+        n_test = int(n_data * test_ratio)
+    if n_valid + n_test == 0:
+        raise ValueError("Neither `valid_ratio` nor `test_ratio` is given")
+    n_train = n_data - n_valid - n_test
+    i_valid = n_train + n_valid
+
+    idxs = np.arange(n_data)
+    np.random.shuffle(idxs)
+
+    train_idx = idxs[:n_train]
+    valid_idx = idxs[n_train:i_valid]
+    test_idx  = idxs[i_valid:]
+
+    return train_idx, valid_idx, test_idx
+
+class CrossValidation:
+    def __init__(self, n_fold:int, data=None, n_data=None, stratum=None, return_index=False, seed:int=None):
+        if data is None and n_data is None:
+            raise ValueError('Either `n_data` or `data` should be given')
+        if data is None:
+            return_index = True
+        if isinstance(seed, int):
+            np.random.seed(seed)
+
+        self.return_index = return_index
+        if data is not None:
+            n_data = len(data)
+            self._data = np.array(data)
+
+        index = np.arange(n_data)
+        if stratum is None:
+            k = np.min([n_fold, n_data])
+            if k < n_fold:
+                print(f"Notice: Reduced number of folds ({n_fold} -> {k})")
+            np.random.shuffle(index)
+            self.train_index, self.valid_index = self._split_(index, k)
+        else:
+            if len(stratum) != n_data:
+                raise ValueError(f"Dimension mismatch between `data` ({n_data}) and `stratum` ({len(stratum)})")
+            stratum = np.array(stratum)
+            cs = np.sort(np.unique(stratum))
+            ks = np.array([np.sum(c == stratum) for c in cs])
+            k  = np.min([n_fold, np.max(ks)])
+            if k < n_fold:
+                print(f"Notice: Reduced number of folds ({n_fold} -> {k})")
+            train_index = [[] for _ in range(k)]
+            valid_index = [[] for _ in range(k)]
+            if k > np.min(ks):
+                print(f"Warning: Number of folds is larger than number of data (got: {k} / min: {np.min(ks)}).\nMore than one fold contains full data of class: {cs[ks < n_fold]}")
+            for c in cs:
+                idx = index[c == stratum]
+                np.random.shuffle(idx)
+                tidxs, vidxs = self._split_(idx, k)
+                for i, (tidx, vidx) in enumerate(zip(tidxs, vidxs)):
+                    train_index[i].append(tidx)
+                    valid_index[i].append(vidx)
+            self.train_index = [np.hstack(idx) for idx in train_index]
+            self.valid_index = [np.hstack(idx) for idx in valid_index]
+
+    def __getitem__(self, i:int):
+        if self.return_index:
+            return self.train_index[i], self.valid_index[i]
+        else:
+            return self._data[self.train_index[i]], self._data[self.valid_index[i]]
+
+    def __len__(self):
+        return len(self.train_index)
+    
+    def _split_(self, index, k):
+        n = len(index)
+        c = int(n/k) + bool(n%k)
+        l = n - k * (c - bool(n%k))
+        train_index = []
+        valid_index = []
+        i1 = 0
+        i2 = c
+        for i in range(k):
+            train_index.append(np.hstack([index[:i1], index[i2:]]))
+            valid_index.append(index[i1:i2])
+
+            i1 += c
+            if i == (l-1): c -= 1
+            i2 += c
+
+        return train_index, valid_index

@@ -14,32 +14,24 @@ for k in ['cgcnn','elemnet','magpie_sc','mat2vec','matscholar','megnet16','oliyn
     elmd[k.replace('_sc','')] = elmd_data
 
 def composition_to_feature(composit_dict, 
-                           feature_type='a', 
+                           feature_type='magpie', 
                            dtype=np.float32,
                            by_fraction=True,
                            norm=True,
                            *args, **kwargs):
-    comp_vec = _composition_to_feature(composit_dict, 'composit', dtype, by_fraction, norm)
-    magpie_vec = _composition_to_feature(composit_dict, 'magpie_sc', dtype, by_fraction, norm)
-    megnet_vec = _composition_to_feature(composit_dict, 'megnet16', dtype, by_fraction, norm)
-    oliynyk_vec = _composition_to_feature(composit_dict, 'oliynyk_sc', dtype, by_fraction, norm)
-
+    
     if (feature_type in elmd.keys()) or feature_type.startswith('comp'):
         return _composition_to_feature(composit_dict, feature_type, dtype, by_fraction, norm)
-    elif feature_type == 'a':
-        return np.hstack([comp_vec, magpie_vec])
-    elif feature_type == 'b':
-        return np.hstack([comp_vec, megnet_vec])
-    elif feature_type == 'c':
-        return np.hstack([comp_vec, oliynyk_vec])
-    elif feature_type == 'd':
-        return np.hstack([comp_vec, magpie_vec, megnet_vec])
-    elif feature_type == 'e':
-        return np.hstack([comp_vec, magpie_vec, oliynyk_vec])
-    elif feature_type == 'f':
-        return np.hstack([comp_vec, megnet_vec, oliynyk_vec])
-    elif feature_type == 'g':
-        return np.hstack([comp_vec, magpie_vec, megnet_vec, oliynyk_vec])
+    elif '+' in feature_type:
+        feature_types = []
+        for x in feature_type.split('+'):
+            for k in ['composit','cgcnn','elemnet','magpie','mat2vec','matscholar','megnet16','oliynyk']:
+                if k.startswith(x):
+                    feature_types.append(k)
+                    break
+        return np.hstack([_composition_to_feature(composit_dict, ft, dtype, by_fraction, norm) for ft in feature_types])
+    else:
+        raise NotImplementedError('Invalid feature type:', feature_type)
 
 def _composition_to_feature(composit_dict, 
                            feature_type='composit', 

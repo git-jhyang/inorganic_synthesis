@@ -129,6 +129,7 @@ def main(args):
             if len(test_idx) != 0:
                 head += ' | {:>19s}'.format('Test (Loss/KLD)')
             print(head)
+            print('-' * len(head))
         os.makedirs(output_path, exist_ok=True)
         writer = SummaryWriter(output_path)
 
@@ -188,7 +189,7 @@ def main(args):
                 else:
                     count += args.train_logging_interval
                     if args.train_early_stop > 0 and count > args.train_early_stop:
-                        return
+                        break
 
                 if args.train_logging: 
                     print(log)

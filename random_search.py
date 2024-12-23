@@ -4,7 +4,8 @@ import numpy as np
 from itertools import product
 
 
-feature_type = ['cgcnn','elemnet','magpie','oliynyk','elemnet+magnet','magpie+magnet','cgcnn+elemnet']
+#feature_type = ['cgcnn','elemnet','magpie','oliynyk','elemnet+magnet','magpie+magnet','cgcnn+elemnet']
+feature_type = ['magpie','oliynyk','elemnet+magnet']
 batch_size = [32, 64]
 hidden_dims = [64, 128]
 hidden_layers = [2, 4]
@@ -49,7 +50,10 @@ def exc(i, shared_list):
 #    T.args.model_batch_norm = bool(i_bn)
     T.args.output_path = '/home/jhyang/WORKSPACES/MODELS/isyn/GCVAE_CASE_1_condition'
     T.args.data_path = './data/screened_document_reaction_ss.pkl.gz'
+    T.args.split_by_year = False
+    T.args.split_cross_valid == 5
     T.main(T.args)
+
     T.args.split_by_year = True
     T.args.split_cross_valid == 0
     T.main(T.args)

@@ -85,7 +85,7 @@ def main(args):
     if args.split_by_year:
         split_type = 'year_2016_2018'
     elif args.split_cross_valid != 0:
-        split_type = 'cv_00'
+        split_type = f'cv_0{args.split_cross_valid-1}'
 
     output_path = os.path.join(args.output_path, identifier, split_type)
     if os.path.isdir(output_path):
@@ -119,7 +119,8 @@ def main(args):
             output_path = os.path.join(args.output_path, identifier, f'cv_{n:02d}')
             train_idx, valid_idx = CV[n]
             test_idx = []
-
+        if os.path.isdir(output_path):
+            continue
         if args.train_logging:
             print()
             print(output_path)

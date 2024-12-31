@@ -5,14 +5,13 @@ from itertools import product
 
 
 #feature_type = ['cgcnn','elemnet','magpie','oliynyk','elemnet+magnet','magpie+magnet','cgcnn+elemnet']
-feature_type = ['magpie','oliynyk','elemnet+magnet']
-batch_size = [32, 64]
-hidden_dims = [64, 128]
-hidden_layers = [2, 4]
-latent_dims = [4, 8, 16]
+feature_type = ['cgcnn','elemnet+magnet','cgcnn+elemnet']
+batch_size = [64, 128]
+hidden_dims = [128, 256, 512]
+hidden_layers = [4, 8]
+latent_dims = [4, 8]
 
 hps = list(product(*[feature_type, batch_size, hidden_dims, hidden_layers, latent_dims]))
-
 
 def exc(i, shared_list):
 #     np.random.seed(i)
@@ -60,4 +59,4 @@ def exc(i, shared_list):
 
 with mp.Pool(2) as pool:
     shared_list = mp.Manager().list()
-    pool.starmap(exc, [(i, shared_list) for i in range(200)])
+    pool.starmap(exc, [(i, shared_list) for i in range(len(hps))])

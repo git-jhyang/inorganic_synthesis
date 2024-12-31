@@ -8,11 +8,11 @@ from .feature import (PrecursorReference,
 from typing import Dict, List
 
 class BaseData:
-    def __init__(self, 
-                 data : Dict = {}, 
+    def __init__(self,
+                 data : Dict = {},
                  base_info_attrs : List[str] = ['id_target','id_reaction','count','doi','year','year_doc'],
                  info_attrs : List[str] = [],
-                 *args, **kwargs):        
+                 *args, **kwargs):
         self._info_attrs = []
         self._feature_attrs = []
 #        self.device = None
@@ -20,7 +20,7 @@ class BaseData:
             if attr not in data.keys():
                 continue
             if attr in self._info_attrs:
-                continue            
+                continue
             self._info_attrs.append(attr)
             setattr(self, attr, data[attr])
 
@@ -84,7 +84,7 @@ class BaseData:
 
 ################################################################################################
 class ReactionData(BaseData):
-    def __init__(self, 
+    def __init__(self,
                  data : Dict = {},
                  feat_type : str = 'composit',
                  target_comp : Dict = {},
@@ -230,29 +230,29 @@ class SequenceData(ReactionData):
 
         self._feature_attrs.append('sequence_mask')
         sequence_mask = np.zeros((max_length), dtype=bool)
-        if hasattr(self, 'precursor_feat'): 
-            self.m = self.labels.shape[0]
+        if hasattr(self, 'precursor_feat'):
+            self.m = self.label.shape[0]
             self.precursor_feat = np.vstack([
                 SOS_VEC.reshape(1,-1), self.precursor_feat, np.repeat(EOS_VEC.reshape(1,-1), max_length, axis=0)
             ])[:max_length].astype(np.float32)[np.newaxis, ...]
-            self.labels = np.hstack([
-                [SOS], self.labels.reshape(-1), [EOS] * max_length
+            self.label = np.hstack([
+                [SOS], self.label.reshape(-1), [EOS] * max_length
             ])[:max_length].astype(int).reshape(1,-1)
             sequence_mask[:self.m+1] = True
         else:
             self._feature_attrs.append('precursor_feat')
-            self._feature_attrs.append('labels')
+            self._feature_attrs.append('label')
             self.precursor_feat = SOS_VEC.reshape(1, 1, -1)
-            self.labels = np.array([SOS]).reshape(1,-1)
+            self.label = np.array([SOS]).reshape(1,-1)
         self.sequence_mask = sequence_mask.reshape(1,-1)
 
     def shuffle(self):
-        if not hasattr(self, 'm'): 
+        if not hasattr(self, 'm'):
             return
         j = np.random.permutation(self.m)
         i = np.arange(self.n)
         i[1:self.m + 1] = j + 1
-        return self.precursor_feat[:, i], self.labels[:, i]
+        return self.precursor_feat[:, i], self.label[:, i]
 
 
 ################################################################################################
@@ -704,7 +704,7 @@ class SequenceDataset(BaseDataset):
             'x': prec_feats,
             'label': label,
             'neg_label': neg_label,
-            'context': conditions,
+            'context': condition_feat,
             'weight': weights,
             'sequence_mask': sequence_mask,
             'precursor_mask': precursor_mask,

@@ -24,6 +24,7 @@ ActiveElements = sorted(
     Metalloids + Lanthanoids + Actinoids_1 + NonMetals, key=lambda x: Element(x).number)
 AllElements = sorted(ActiveElements + Actinoids_2 + Halogens + Unknown, key=lambda x: Element(x).number)
 
+
 def to_numpy(vector):
     if isinstance(vector, torch.Tensor):
         return vector.cpu().numpy()
@@ -284,7 +285,7 @@ def compute_top_accuracy(output):
 #             print('{:6s} | {} | {}'.format(k, '  '.join([f'{v:.4f}' for v in vs[:3]]), '  '.join([f'{v:.4f}' for v in vs[3:]])))
 #     return acc, th, output_metric, parsed_output
 
-def get_likely_list(target, metals, preds, pred_has, precursor_reference):
+def get_likely_list(target, metals, preds, pred_has, precursor_reference, th=0.01):
     ele_mask = [precursor_reference.get_weight(e).reshape(-1) > 0 for e in target.keys() if e not in MetalElements]
     sorted_probs = []
     for metal, prob in zip(metals, preds):
@@ -293,7 +294,7 @@ def get_likely_list(target, metals, preds, pred_has, precursor_reference):
         p_sum = 0
         for idx in idxs:
             p = prob[idx]
-            if p_sum > 0.99 or p < 0.01:
+            if p_sum > 1-th or p < th:
                 break
             p_sum += p
             step_probs.append([p, idx])
@@ -318,6 +319,8 @@ def get_likely_list(target, metals, preds, pred_has, precursor_reference):
         if skip:
             continue
         l = np.prod([c[0] for c in comb])
+        if l < 0.001:
+            continue
         p = []
         for metal, label in zip(metals, labels):
             if metal == 'none' and label == precursor_reference._ligand_str.index(''):
@@ -328,6 +331,25 @@ def get_likely_list(target, metals, preds, pred_has, precursor_reference):
         l_sum += l
     return [(l[0], l[1]/l_sum) for l in sorted(likelies, key=lambda x: x[1], reverse=True)]
 
+def parse_sampling_output(output, precursor_reference):
+    n_sample = output['prob'].shape[1]
+    results = []
+    for i, meta in enumerate(output['info']):
+        m = output['rxn_id'] == i
+        result = {'target_comp':Composition(meta['target_comp']).get_integer_formula_and_factor()[0],
+                'heat_temp': meta['heat_temp'], 
+                'heat_time': meta['heat_time'],
+                'tree':{}
+                }
+        for prob, last in zip(output['prob'][m].transpose(1,0,2), output['has_last'][i]):
+            likelies = get_likely_list(meta['target_comp'], meta['metals'], prob, last, precursor_reference)
+            for key, likely in likelies:
+                if key not in result['tree'].keys():
+                    result['tree'][key] = 0
+                result['tree'][key] += likely / n_sample
+        result['tree'] = {k:v for k,v in sorted(result['tree'].items(), key=lambda x: x[1], reverse=True) if v >= 0.01}
+        results.append(result)
+    return results
 
 def train_test_split(n_data, valid_ratio=None, test_ratio=None, seed=None):
     if isinstance(seed, int):

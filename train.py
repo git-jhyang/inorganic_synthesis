@@ -107,8 +107,8 @@ def main(args):
         valid_idx = np.where((years > 2016) & (years < 2019))[0]
         test_idx  = np.where(years > 2018)[0]
     elif 'cv' in split_type:
-        CV = CrossValidation(n_fold=args.split_cross_valid, n_data=len(DS), return_index=True, seed=100)
         n_iter = args.split_cross_valid
+        CV = CrossValidation(n_fold=args.split_cross_valid, n_data=len(DS), return_index=True, seed=100)
     else:
         train_idx, valid_idx, test_idx = train_test_split(len(DS), *args.split_random_ratio, seed=100)
 

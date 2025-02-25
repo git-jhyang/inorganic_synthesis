@@ -1,6 +1,7 @@
 # user defined files
 dump*
 test*
+nohup.out
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

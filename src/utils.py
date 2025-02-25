@@ -235,122 +235,6 @@ def compute_top_accuracy(output):
     out = np.array(out)
     return np.mean(out), np.mean(out < 1), np.mean(out < 3) # mean_label_rank, accuracy, top-3 recall
 
-# def compute_metrics_from_cvae_output_v0(output, n_top=4, print_result=False):
-#     rxn_id = output['rxn_id']
-#     label = 
-
-#     top_output = {f'top_{i+1}':{} for i in range(n_top)}
-#     for i, l, p, m, h in zip(rxn_id, label, pred_lbl, label_mask, has_label):
-#         if i not in top_output['top_1'].keys():
-#             for j in range(n_top):
-#                 top_output[f'top_{j+1}'][i] = [[], []]
-#         if m.sum() == 1:
-#             for j in range(n_top):
-#                 top_output[f'top_{j+1}'][i][0] = np.hstack([top_output[f'top_{j+1}'][i][0], [True]])
-#                 top_output[f'top_{j+1}'][i][1] = np.hstack([top_output[f'top_{j+1}'][i][1], [True]])
-#             continue
-#         check = h + l.sum()
-#         if check == 0:
-#             continue
-#         elif check == 1:
-#             for j in range(n_top):
-#                 top_output[f'top_{j+1}'][i][0] = np.hstack([top_output[f'top_{j+1}'][i][0], [False]])
-#                 top_output[f'top_{j+1}'][i][1] = np.hstack([top_output[f'top_{j+1}'][i][1], [False]])
-#         else:
-#             idxs = np.argsort(p)[::-1][:n_top]
-#             p_ = np.zeros_like(m)
-#             for j,k in enumerate(idxs):
-#                 if m[k]:
-#                     p_[k] = True
-#                 top_output[f'top_{j+1}'][i][0] = np.hstack([top_output[f'top_{j+1}'][i][0], p_[l]])
-#                 top_output[f'top_{j+1}'][i][1] = np.hstack([top_output[f'top_{j+1}'][i][1], l[p_]])
-#     output_metric = {}
-#     for k, vs in top_output.items():
-#         r = np.hstack([v[0] for v in vs.values()]).mean()
-#         p = np.hstack([v[1] for v in vs.values()]).mean()
-#         f = 2 * r * p / (r + p)
-#         r2 = np.mean([np.sum(v[0] == 0) == 0 for v in vs.values()])
-#         p2 = np.mean([np.sum(v[1] == 0) == 0 for v in vs.values()])
-#         f2 = 2 * r2 * p2 / (r2 + p2)
-#         output_metric[k] = [f, p, r, f2, p2, r2]
-    
-#     if print_result:
-#         print('Null label hit accuracy : {:.4f} (th: {:.3f})'.format(acc, th))
-#         print('-' * 56)
-#         print('{:7s}| {:23s}| {}'.format('', 'Precursor', 'Reaction'))
-#         s = ' '.join([f'{s:7s}' for s in ['F1','Prec','Recall']])
-#         print('{:7s}| {}| {}'.format('', s, s))
-#         print('-' * 56)
-#         for k, vs in output_metric.items():
-#             print('{:6s} | {} | {}'.format(k, '  '.join([f'{v:.4f}' for v in vs[:3]]), '  '.join([f'{v:.4f}' for v in vs[3:]])))
-#     return acc, th, output_metric, parsed_output
-
-def get_likely_list(target, metals, preds, pred_has, precursor_reference, th=0.01):
-    ele_mask = [precursor_reference.get_weight(e).reshape(-1) > 0 for e in target.keys() if e not in MetalElements]
-    sorted_probs = []
-    for metal, prob in zip(metals, preds):
-        step_probs = []
-        idxs = np.argsort(prob)[::-1]
-        p_sum = 0
-        for idx in idxs:
-            p = prob[idx]
-            if p_sum > 1-th or p < th:
-                break
-            p_sum += p
-            step_probs.append([p, idx])
-        if metal == 'none':
-            step_probs = [[1 - pred_has, precursor_reference._ligand_str.index('')]] + [[_p * pred_has, _i] for _p,_i in step_probs]
-        sorted_probs.append(step_probs)
-
-    likelies = []
-    l_sum = 0
-    for comb in product(*sorted_probs):
-        if np.sum([c[0] for c in comb]) < 0.1:
-            continue
-        labels = [c[1] for c in comb]
-        skip = False
-        if len(ele_mask) != 0:
-            label_mask = np.zeros_like(ele_mask[0], dtype=bool)
-            label_mask[labels] = True
-            for _mask in ele_mask:
-                if (_mask & label_mask).sum() == 0:
-                    skip = True
-                    break
-        if skip:
-            continue
-        l = np.prod([c[0] for c in comb])
-        if l < 0.001:
-            continue
-        p = []
-        for metal, label in zip(metals, labels):
-            if metal == 'none' and label == precursor_reference._ligand_str.index(''):
-                continue
-            p_comp = precursor_reference.get_info(metal, label)['precursor_comp']
-            p.append(Composition(p_comp).get_integer_formula_and_factor()[0])
-        likelies.append((tuple(p), l))
-        l_sum += l
-    return [(l[0], l[1]/l_sum) for l in sorted(likelies, key=lambda x: x[1], reverse=True)]
-
-def parse_sampling_output(output, precursor_reference):
-    n_sample = output['prob'].shape[1]
-    results = []
-    for i, meta in enumerate(output['info']):
-        m = output['rxn_id'] == i
-        result = {'target_comp':Composition(meta['target_comp']).get_integer_formula_and_factor()[0],
-                'heat_temp': meta['heat_temp'], 
-                'heat_time': meta['heat_time'],
-                'tree':{}
-                }
-        for prob, last in zip(output['prob'][m].transpose(1,0,2), output['has_last'][i]):
-            likelies = get_likely_list(meta['target_comp'], meta['metals'], prob, last, precursor_reference)
-            for key, likely in likelies:
-                if key not in result['tree'].keys():
-                    result['tree'][key] = 0
-                result['tree'][key] += likely / n_sample
-        result['tree'] = {k:v for k,v in sorted(result['tree'].items(), key=lambda x: x[1], reverse=True) if v >= 0.01}
-        results.append(result)
-    return results
-
 def train_test_split(n_data, valid_ratio=None, test_ratio=None, seed=None):
     if isinstance(seed, int):
         np.random.seed(seed)
@@ -363,7 +247,7 @@ def train_test_split(n_data, valid_ratio=None, test_ratio=None, seed=None):
     else:
         n_test = int(n_data * test_ratio)
     if n_valid + n_test == 0:
-        raise ValueError("Neither `valid_ratio` nor `test_ratio` is given")
+        return np.arange(n_data), [], [] 
     n_train = n_data - n_valid - n_test
     i_valid = n_train + n_valid
 
@@ -446,3 +330,46 @@ class CrossValidation:
             i2 += c
 
         return train_index, valid_index
+
+def get_precurosr_likely(sampling_output, PDS):
+    info = sampling_output['info']
+    rxn_ids = sampling_output['rxn_id']
+    pred_label = sampling_output['pred_label']
+    pred_has = sampling_output['pred_has']
+
+    outputs = []
+    for rxn_id in np.unique(rxn_ids):
+        metals = info[rxn_id]['metals']
+        prob = torch.from_numpy(pred_label[rxn_ids == rxn_id]).float()
+        has = pred_has[rxn_id]
+        masks = [PDS.get_weight(metal).reshape(-1) != 0 for metal in metals]
+        mask_labels = [np.where(m)[0] for m in masks]
+        joint = prob[0, :, masks[0]]
+
+        for p_, m in zip(prob[1:-1], masks[1:-1]):
+            numJointDim = joint.dim() - 1
+            p = p_[:, m]
+            p_expended = p.view(p.shape[0], *([1]*numJointDim), p.shape[1])
+            joint = joint.unsqueeze(-1) * p_expended
+        joint_0 = joint[~has].sum(0) / prob.shape[1]
+
+        p_last = prob[-1, :, masks[-1]][has]
+        p_expended = p_last.view(p_last.shape[0], *([1]*(numJointDim+1)), p_last.shape[1])
+        joint_ = joint[has].unsqueeze(-1) * p_expended
+        joint_1 = joint_.sum(0) / prob.shape[1]
+
+        topk_val, indices = torch.topk(torch.hstack([joint_0.view(-1), joint_1.view(-1)]), k=20)
+        n_joint_0 = joint_0.numel()
+        out = []
+        for v, idx in zip(topk_val, indices):
+            lbl = tuple()
+            if idx < n_joint_0:
+                idxs = torch.unravel_index(idx, joint_0.shape)
+            else:
+                idxs = torch.unravel_index(idx - n_joint_0, joint_1.shape)
+            for j, ml, metal in zip(idxs, mask_labels, metals):
+                precursor_info = PDS.get_info(metal, ml[j])
+                lbl += (precursor_info['precursor_str'],)
+            out.append([lbl, v.item()])
+        outputs.append(out)
+    return outputs

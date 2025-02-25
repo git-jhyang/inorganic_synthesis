@@ -126,23 +126,23 @@ class VAETrainer(BaseTrainer): # Classification
         edge_attr = _feat['edge_attr'].to(self.device)
         weight = _feat['weight'].to(self.device)
         rxn_id = torch.from_numpy(_feat['rxn_id']).long().to(self.device)
+        is_last = get_is_last(_feat['rxn_id'])
 
         pred, kld, l, z = self.model(x=precursor_feat, condition=condition, edge_index=edge_index, edge_attr=edge_attr, reaction_idx=rxn_id)
         mu, log_var = torch.chunk(l.detach().cpu(), 2, -1)
-        pred_has = pred[:, 0]
+        pred_has = pred[is_last, 0]
         pred_lbl = pred[:, 1:] + ((weight > 0).long().float() - 1) * 1e5
         output = [1/(1 + torch.exp(-pred_has.detach())), 
                   torch.nn.functional.softmax(pred_lbl.detach(), dim=1), 
                   kld.detach(), mu, log_var.exp(), z.detach()]
         if compute_loss:
             label = _feat['label'].to(self.device)
-            label_has = label.sum(1)
+            label_has = label[is_last].sum(1)
             label_loc, label_index = torch.where(label)
             w = weight[label.bool()]
             w[pred_lbl[label_loc].argmax(1) != label_index] = 1.0
 
-            is_last = get_is_last(_feat['rxn_id'])
-            bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')(pred_has, label_has)[is_last]
+            bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')(pred_has, label_has)
 #            focal_loss = (label_has[is_last] - 0.9).abs() * bce_loss * (1 - torch.exp(-bce_loss)) ** 2
 
             ce_loss = self.crit(pred_lbl[label_loc], label_index) * w
@@ -151,8 +151,9 @@ class VAETrainer(BaseTrainer): # Classification
         else:
             return output
 
-    def sampling(self, dataloader, n_sample):
-        output = {'info':[], 'prob':[], 'has_last':[], 'z':[], 'rxn_id':[]}
+    def sampling(self, dataloader, n_sample, th):
+        self.model.eval()
+        output = {'info':[], 'pred_label':[], 'pred_has':[], 'z':[], 'rxn_id':[]}
         for _feat, info in dataloader:
             condition = _feat['condition_feat'].to(self.device)
             edge_index = _feat['edge_index'].to(self.device)
@@ -164,18 +165,18 @@ class VAETrainer(BaseTrainer): # Classification
                 y, z = self.model.sampling(n=n_sample, edge_index=edge_index, edge_attr=edge_attr, 
                                            condition=condition, reaction_idx=rxn_id)
             prob = torch.nn.functional.softmax(y[..., 1:] + ((weight > 0).float() - 1) * 5000, -1)
-            has_last = torch.nn.functional.sigmoid(y[is_last, :, 0])
+            has_last = torch.nn.functional.sigmoid(y[is_last, :, 0]) > th
             output['info'].extend(info)
             if len(output['z']) == 0:
                 output['z'] = z.cpu().numpy()
-                output['prob'] = prob.cpu().numpy()
-                output['has_last'] = has_last.cpu().numpy()
+                output['pred_label'] = prob.cpu().numpy()
+                output['pred_has'] = has_last.cpu().numpy()
                 output['rxn_id'] = rxn_id.cpu().numpy()
             else:
                 output['z'] = np.vstack([output['z'], z.cpu().numpy()])
-                output['prob'] = np.vstack([output['prob'], prob.cpu().numpy()])
-                output['has_last'] = np.vstack([output['has_last'], has_last.cpu().numpy()])
-                output['rxn_id'] = np.hstack([output['rxn_id'], rxn_id.cpu().numpy() + output['rxn_id'].max() + 1])
+                output['pred_label'] = np.vstack([output['pred_label'], prob.cpu().numpy()])
+                output['pred_has'] = np.vstack([output['pred_has'], has_last.cpu().numpy()])
+                output['rxn_id'] = np.hstack([output['rxn_id'], rxn_id.cpu().numpy() + np.max(output['rxn_id']) + 1])
         return output
 
 class SequenceTrainer(BaseTrainer):

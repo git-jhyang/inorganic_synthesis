@@ -1,4 +1,5 @@
 from .utils import ActiveElements, AllElements, NEAR_ZERO, MetalElements, composit_parser
+from pymatgen.core import Composition
 import numpy as np
 import json, os, gzip, pickle, numbers, abc, dill
 
@@ -268,7 +269,7 @@ class PrecursorReference(BaseReference):
         elif isinstance(precursor, str) and (precursor in self._precursor_to_source.keys()):
             i_src = self._precursor_to_source[precursor]
         elif isinstance(precursor, dict):
-            precursor_str = composit_parser(precursor)
+            precursor_str = Composition(precursor).get_integer_formula_and_factor()[0]
             if precursor_str in self._precursor_to_source.keys():
                 i_src = self._precursor_to_source[precursor_str]
         if (i_src is None) and exit:
@@ -406,7 +407,7 @@ class LigandTemplateReference(BaseReference):
         i_src = None
         if len(args) == 1:
             if isinstance(args[0], dict):
-                precursor = composit_parser(args[0])
+                precursor = Composition(args[0]).get_integer_formula_and_factor()[0]
             elif isinstance(args[0], str):
                 precursor = args[0]
             else:

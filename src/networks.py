@@ -657,8 +657,9 @@ class GraphCVAE(VAE):
         zs = []
         for _ in range(n):
             z = torch.randn(condition.shape[0], self._model_param['latent_dim']).to(self.device)
-            ys.append(self.decoder(x = torch.concat([z, condition], -1)[reaction_idx],
-                                   edge_index = edge_index,
-                                   edge_attr = edge_attr))
+            y = self.decoder(x = torch.concat([z, condition], -1)[reaction_idx],
+                             edge_index = edge_index,
+                             edge_attr = edge_attr)
+            ys.append(y)
             zs.append(z)
         return torch.stack(ys).transpose(1,0), torch.stack(zs).transpose(1,0) # dim_data, dim_sample, dim_label

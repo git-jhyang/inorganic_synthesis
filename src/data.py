@@ -35,7 +35,7 @@ class BaseData:
         for attr in self._feature_attrs:
             data = getattr(self, attr)
             if isinstance(data, np.ndarray):
-                setattr(self, attr, torch.from_numpy(data))            
+                setattr(self, attr, torch.from_numpy(data))
 #        self.device = 'cpu'
     
 #    def to(self, device='cpu'):

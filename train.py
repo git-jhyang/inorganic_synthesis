@@ -177,7 +177,9 @@ def main(args):
                 
                 if epoch < 50:
                     pass
-                elif (len(valid_dl) != 0) and (valid_loss < best_loss):
+                if len(valid_dl) == 0:
+                    pass
+                elif valid_loss < best_loss:
                     count = 0
                     best_loss = valid_loss
                     writer.add_scalar('Loss/BestValid', valid_loss, epoch)
